@@ -113,7 +113,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 > C-01 parte el single-file (constraint 1). C-02 define el modelo que el resto consume, incluyendo `locked` y esquema persistido.
 
 ### [C-01] `foundation-multifile`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-13, archivado en `openspec/changes/archive/2026-10-13-c-01-foundation-multifile/`)
 - **Scope**: Scaffolding portable multi-archivo + harness de pruebas sin romper el doble-clic (US-011, US-012, US-013; constraint 1 NO single-file)
   - Partir `index.html` (~30 KB, solo referencia de conducta — la primera prueba no se extiende) en estructura propuesta y documentada en `docs/ESTRUCTURA.md`:
     - `index.html` (operador, entrypoint delgado) + `public.html` (pantalla pública standalone, sin `document.write`)

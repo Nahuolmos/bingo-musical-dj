@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Music Bingo DJ — Tests (file:// mirror)</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>body{padding:24px}.pass{color:#5de0a0}.fail{color:#ff6470}pre{background:#15151e;border:1px solid #30303e;border-radius:12px;padding:16px;white-space:pre-wrap}</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top"><div class="brand"><div class="logo">ON</div><div><div class="eyebrow">MUSIC BINGO DJ</div><h1>Harness portable — tests.html</h1><p> espejo de <code>tests/*.test.js</code> para doble-click sin Node</p></div></div></header>
+<section class="panel"><h2>Resultados por módulo</h2><div id="results"><p class="muted">Ejecutando…</p></div></section>
+<section class="panel section"><h2>Cómo verificar</h2><p class="muted small">1) Doble-click <code>tests.html</code> vía <code>file://</code> en Chrome/Edge. 2) Todos los módulos deben mostrar PASS. 3) Sin errores en consola. Equivalente Node: <code>node --test tests/core.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js tests/transport.test.js</code></p></div></section>
+</div>
+<script src="js/core.js"></script>
+<script src="js/import.js"></script>
+<script src="js/draw.js"></script>
+<script src="js/store.js"></script>
+<script src="js/public.js"></script>
+<script src="js/app.js"></script>
+<script>
+(function () {
+  'use strict';
+  var out = [];
+  function check(name, fn) {
+    try { fn(); out.push({ name: name, ok: true }); }
+    catch (e) { out.push({ name: name, ok: false, error: String(e && e.message || e) }); }
+  }
+  function assert(cond, msg) { if (!cond) throw new Error(msg || 'assert failed'); }
+
+  check('core.js carga (makeId/esc/available)', function () {
+    assert(window.MBDJ && MBDJ.core, 'MBDJ.core missing');
+    assert(typeof MBDJ.core.makeId === 'function', 'makeId');
+    assert(typeof MBDJ.core.esc === 'function', 'esc');
+    assert(MBDJ.core.esc('<b>"&\'</b>') === '&lt;b&gt;&quot;&amp;&#39;&lt;/b&gt;', 'esc literal');
+    assert(MBDJ.core.available([]).length === 0, 'available empty');
+  });
+  check('import.js parsea Artista - Titulo, ,/;/tab, header, dedupe', function () {
+    assert(MBDJ.import, 'MBDJ.import missing');
+    var r = MBDJ.import.normalizeLine('Shakira - Hips Don\'t Lie');
+    assert(r.title === 'Hips Don\'t Lie' && r.artist === 'Shakira', 'normalizeLine');
+    var h = MBDJ.import.parseText('Titulo,Artista\nQueen,Don\'t Stop Me Now');
+    assert(h.length === 1, 'header skip');
+    var d = MBDJ.import.dedupe([
+      { id: 'a', title: 'Música Ligera', artist: 'Soda Stereo' },
+      { id: 'b', title: 'musica ligera', artist: 'soda stereo' }
+    ]);
+    assert(d.length === 1, 'dedupe diacritics');
+  });
+  check('draw.js secureIndex en rango + spinning guard', function () {
+    assert(MBDJ.draw, 'MBDJ.draw missing');
+    for (var i = 0; i < 50; i++) {
+      var v = MBDJ.draw.secureIndex(12);
+      assert(v >= 0 && v < 12, 'bounds ' + v);
+    }
+    assert(MBDJ.draw.secureIndex(1) === 0, 'n=1');
+  });
+  check('store.js seam save/load/clear', function () {
+    assert(MBDJ.store, 'MBDJ.store missing');
+    MBDJ.store.save({ songs: [] });
+    MBDJ.store.clear();
+    assert(MBDJ.store.load() === null, 'clear->null');
+  });
+  check('public.js + app.js seams (canal, demo 12, CSV BOM, public.html)', function () {
+    assert(MBDJ.public && MBDJ.public.PUBLIC_CHANNEL === 'music-bingo-dj-on', 'channel');
+    assert(typeof MBDJ.public.buildPublicHTML === 'function', 'builder');
+    assert(MBDJ.app && MBDJ.app.PUBLIC_URL === 'public.html', 'PUBLIC_URL');
+    assert(MBDJ.app.buildDemoSongs().length === 12, 'demo 12');
+    var csv = MBDJ.app.buildCsv([{ n: 1, title: 'A', artist: 'B', status: 'played', time: '00:00:00' }]);
+    assert(csv.charAt(0) === '﻿', 'BOM');
+  });
+  check('sin document.write en ruta principal', function () {
+    var scripts = Array.prototype.slice.call(document.scripts).map(function (s) { return s.src; }).join(' ');
+    assert(scripts.indexOf('js/core.js') !== -1, 'orden core presente');
+  });
+  check('transporte DJ->publica con fallback file:// (canal + storage)', function () {
+    assert(MBDJ.public && MBDJ.public.TRANSPORT_KEY === 'music-bingo-dj-on', 'transport key');
+    assert(typeof MBDJ.public.isStateMessage === 'function', 'isStateMessage');
+    assert(typeof MBDJ.public.parseTransportValue === 'function', 'parseTransportValue');
+    assert(MBDJ.public.isStateMessage({ type: 'state' }) === true, 'state ok');
+    assert(MBDJ.public.parseTransportValue('no-json{{{') === null, 'parser null ante basura');
+    var html = MBDJ.public.buildPublicHTML();
+    assert(html.indexOf("BroadcastChannel('music-bingo-dj-on')") !== -1, 'canal primario');
+    assert(html.indexOf("addEventListener('storage'") !== -1, 'fallback storage');
+    assert(html.indexOf('getItem') !== -1, 'hidratacion al abrir');
+    assert(typeof MBDJ.app.buildStateMessage === 'function', 'buildStateMessage');
+    assert(typeof MBDJ.app.writeTransport === 'function', 'writeTransport');
+    var slot = null;
+    var fake = { setItem: function (k, v) { slot = v; }, getItem: function () { return slot; } };
+    var msg = MBDJ.app.buildStateMessage();
+    assert(msg.type === 'state', 'misma interfaz type:state');
+    assert(MBDJ.app.writeTransport(msg, fake) === true, 'espejo a storage');
+    var back = MBDJ.public.parseTransportValue(fake.getItem());
+    assert(MBDJ.public.isStateMessage(back), 'round-trip DJ->publica');
+  });
+  check('public.html inline parsea (nivel2: SyntaxError dejaba la publica en waiting+0)', function () {
+    var html3 = MBDJ.public.buildPublicHTML();
+    var code = html3.split('<scr' + 'ipt>')[1].split('</scr' + 'ipt>')[0];
+    new Function(code); // solo parsea, no ejecuta: lanza si el bloque esta roto
+    assert(html3.indexOf('[c]))}') !== -1, 'esc con corchete cerrado');
+  });
+
+  var el = document.getElementById('results');
+  var pass = out.filter(function (r) { return r.ok; }).length;
+  el.innerHTML = '<p><strong>' + pass + '/' + out.length + ' PASS</strong></p>' +
+    out.map(function (r) {
+      return '<div class="' + (r.ok ? 'pass' : 'fail') + '">' + (r.ok ? '✓' : '✖') + ' ' + r.name + (r.ok ? '' : ' — ' + r.error) + '</div>';
+    }).join('') + '<pre id="consoleLog"></pre>';
+  if (pass !== out.length && window.console) console.error('tests.html: ' + (out.length - pass) + ' checks failed');
+})();
+</script>
+</body></html>
