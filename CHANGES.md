@@ -135,7 +135,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-02] `session-models-core`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-13, archivado en `openspec/changes/archive/2026-10-13-c-02-session-models-core/`)
 - **Scope**: Modelo de dominio en módulos consolidado, con bloqueo y esquema persistible (RN-SOR-01, RN-HIS-01, RN-HIS-03, RN-SES-01)
   - Entidades en `js/core.js` (no en el monolito): `Song {id,title,artist,status,addedAt}`, `HistoryEntry {n,id,title,artist,status,time,motivo}`, `Session {songs,history,current,spinning,locked,startedAt,schemaVersion}` + vistas `total/remaining/drawn`.
   - Nuevo campo `Session.locked: boolean` (false hasta el primer sorteo; lo activa C-07, lo exige C-11) + `schemaVersion: 1` para la restauración de C-06.

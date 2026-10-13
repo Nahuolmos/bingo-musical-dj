@@ -10,7 +10,7 @@
 <div class="wrap">
 <header class="top"><div class="brand"><div class="logo">ON</div><div><div class="eyebrow">MUSIC BINGO DJ</div><h1>Harness portable — tests.html</h1><p> espejo de <code>tests/*.test.js</code> para doble-click sin Node</p></div></div></header>
 <section class="panel"><h2>Resultados por módulo</h2><div id="results"><p class="muted">Ejecutando…</p></div></section>
-<section class="panel section"><h2>Cómo verificar</h2><p class="muted small">1) Doble-click <code>tests.html</code> vía <code>file://</code> en Chrome/Edge. 2) Todos los módulos deben mostrar PASS. 3) Sin errores en consola. Equivalente Node: <code>node --test tests/core.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js tests/transport.test.js</code></p></div></section>
+<section class="panel section"><h2>Cómo verificar</h2><p class="muted small">1) Doble-click <code>tests.html</code> vía <code>file://</code> en Chrome/Edge. 2) Todos los módulos deben mostrar PASS. 3) Sin errores en consola. Equivalente Node: <code>node --test tests/core.test.js tests/core.session.test.js tests/core.transitions.test.js tests/core.history.test.js tests/core.views.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js tests/transport.test.js</code></p></div></section>
 </div>
 <script src="js/core.js"></script>
 <script src="js/import.js"></script>
@@ -68,6 +68,47 @@
     assert(MBDJ.app.buildDemoSongs().length === 12, 'demo 12');
     var csv = MBDJ.app.buildCsv([{ n: 1, title: 'A', artist: 'B', status: 'played', time: '00:00:00' }]);
     assert(csv.charAt(0) === '﻿', 'BOM');
+  });
+  check('core.js modelos sesion (c-02: factories + locked/schemaVersion/motivo)', function () {
+    assert(typeof MBDJ.core.createSession === 'function', 'createSession');
+    assert(typeof MBDJ.core.createSong === 'function', 'createSong');
+    assert(typeof MBDJ.core.createHistoryEntry === 'function', 'createHistoryEntry');
+    var s = MBDJ.core.createSession();
+    assert(s.locked === false && s.schemaVersion === 1, 'locked/schema');
+    assert(s.songs.length === 0 && s.history.length === 0 && s.current === null, 'fresh');
+    var song = MBDJ.core.createSong('T', 'A');
+    assert(song.status === 'available', 'song available');
+    song.status = 'drawn';
+    var e = MBDJ.core.createHistoryEntry(song, 1);
+    assert(e.n === 1 && e.motivo === '' && e.status === 'drawn', 'entry shape');
+  });
+  check('core.js transiciones + historia (c-02: terminal + findLast/fallback)', function () {
+    assert(typeof MBDJ.core.isValidTransition === 'function', 'isValidTransition');
+    assert(typeof MBDJ.core.setSongStatus === 'function', 'setSongStatus');
+    assert(typeof MBDJ.core.setHistoryStatus === 'function', 'setHistoryStatus');
+    var song = { id: 'sx', title: 'T', artist: 'A', status: 'available' };
+    assert(MBDJ.core.setSongStatus(song, 'drawn') === true && song.status === 'drawn', 'fwd');
+    assert(MBDJ.core.setSongStatus(song, 'available') === false && song.status === 'drawn', 'terminal');
+    assert(MBDJ.core.setSongStatus({ status: 'available' }, 'played') === false, 'no salto');
+    var h = [
+      { n: 1, id: 'a', title: 'T1', artist: 'A1', status: 'drawn', time: '12:00:01', motivo: '' },
+      { n: 2, id: 'a', title: 'T2', artist: 'A2', status: 'drawn', time: '12:00:02', motivo: '' }
+    ];
+    assert(MBDJ.core.setHistoryStatus(h, 'a', 'played') === true, 'history ok');
+    assert(h[1].status === 'played' && h[0].status === 'drawn', 'ultimo match');
+    assert(h[1].title === 'T2' && h[1].n === 2, 'preserva snapshot');
+  });
+  check('core.js vistas + helpers (c-02: 5/2/3, esc, makeId, hora)', function () {
+    assert(typeof MBDJ.core.total === 'function', 'total');
+    var mk = function (id, st) { return { id: id, title: 'T', artist: 'A', status: st }; };
+    var sess = MBDJ.core.createSession();
+    sess.songs = [mk('1', 'available'), mk('2', 'available'), mk('3', 'drawn'), mk('4', 'played'), mk('5', 'void')];
+    assert(MBDJ.core.total(sess) === 5, 'total 5');
+    assert(MBDJ.core.remaining(sess) === 2, 'remaining 2');
+    assert(MBDJ.core.drawn(sess) === 3, 'drawn 3');
+    assert(MBDJ.core.esc('<scr' + 'ipt>alert(1)</scr' + 'ipt>').indexOf('<scr' + 'ipt>') === -1, 'esc');
+    assert(/^s[0-9a-z]+$/.test(MBDJ.core.makeId()), 'makeId shape');
+    assert(/^\d{2}:\d{2}:\d{2}$/.test(MBDJ.core.formatTime(new Date())), 'hora HH:MM:SS');
   });
   check('sin document.write en ruta principal', function () {
     var scripts = Array.prototype.slice.call(document.scripts).map(function (s) { return s.src; }).join(' ');

@@ -13,7 +13,10 @@
     songs: [],
     history: [],
     current: null,
-    spinning: false
+    spinning: false,
+    locked: false,
+    startedAt: new Date().toISOString(),
+    schemaVersion: 1
   };
 
   // Verbatim from monolith.
@@ -35,9 +38,89 @@
     return arr.filter(function (s) { return s.status === 'available'; });
   }
 
+  // c-02: plain-object factories (JSON-safe, no classes).
+  function createSong(title, artist) {
+    return {
+      id: makeId(),
+      title: title,
+      artist: (artist == null || artist === '') ? '' : String(artist),
+      status: 'available',
+      addedAt: new Date().toISOString()
+    };
+  }
+
+  function formatTime(d) {
+    return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+
+  function createHistoryEntry(song, n) {
+    return {
+      n: n,
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      status: song.status,
+      time: formatTime(new Date()),
+      motivo: ''
+    };
+  }
+
+  function createSession() {
+    return {
+      songs: [],
+      history: [],
+      current: null,
+      spinning: false,
+      locked: false,
+      startedAt: new Date().toISOString(),
+      schemaVersion: 1
+    };
+  }
+
+  // c-02: terminal transitions available -> drawn -> played | void.
+  function isValidTransition(from, next) {
+    if (from === 'available' && next === 'drawn') return true;
+    if (from === 'drawn' && (next === 'played' || next === 'void')) return true;
+    return false;
+  }
+
+  function setSongStatus(song, next) {
+    if (!song || !isValidTransition(song.status, next)) return false;
+    song.status = next;
+    return true;
+  }
+
+  // c-02: in-place history update (findLast with index-loop fallback).
+  function setHistoryStatus(history, songId, next) {
+    if (!Array.isArray(history)) return false;
+    var h = null;
+    if (history.findLast) h = history.findLast(function (x) { return x.id === songId; });
+    else {
+      for (var i = history.length - 1; i >= 0; i--) {
+        if (history[i].id === songId) { h = history[i]; break; }
+      }
+    }
+    if (!h) return false;
+    h.status = next;
+    return true;
+  }
+
+  // c-02: derived views.
+  function total(session) {
+    return session.songs.length;
+  }
+
+  function remaining(session) {
+    return session.songs.filter(function (s) { return s.status === 'available'; }).length;
+  }
+
+  function drawn(session) {
+    return session.songs.filter(function (s) { return s.status !== 'available'; }).length;
+  }
+
   root.MBDJ = root.MBDJ || {};
   root.MBDJ.state = state;
-  root.MBDJ.core = { $, state: state, makeId: makeId, esc: esc, available: available };
+  root.MBDJ.core = { $, state: state, makeId: makeId, esc: esc, available: available, createSong: createSong, createHistoryEntry: createHistoryEntry, createSession: createSession, formatTime: formatTime, isValidTransition: isValidTransition, setSongStatus: setSongStatus, setHistoryStatus: setHistoryStatus, total: total, remaining: remaining, drawn: drawn };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = root.MBDJ.core;
