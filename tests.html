@@ -47,6 +47,31 @@
     ]);
     assert(d.length === 1, 'dedupe diacritics');
   });
+  check('c-04 espejo: separadores/header/numbering/dedupe/reporte (mismos literales que Node)', function () {
+    var semi = MBDJ.import.parseText('Fito Páez;El Amor Después del Amor');
+    assert(semi.length === 1 && semi[0].artist === 'Fito Páez', 'semicolon mirror');
+    var comma = MBDJ.import.parseText('Mercedes Sosa,Como la Cigarra');
+    assert(comma.length === 1 && comma[0].title === 'Como la Cigarra', 'comma mirror');
+    var tab = MBDJ.import.parseText('Charly García\tDemoliendo Hoteles');
+    assert(tab.length === 1 && tab[0].artist === 'Charly García', 'tab mirror');
+    var hdr = MBDJ.import.parseText('Titulo;Artista\nLos Tipitos;Campanas en la Noche');
+    assert(hdr.length === 1 && hdr[0].artist === 'Los Tipitos', 'header ; mirror');
+    var urlRow = 'https://ejemplo.com/lista,Mi Canción';
+    var url = MBDJ.import.parseText(urlRow);
+    assert(url.length === 1 && url[0].title === urlRow && url[0].artist === '', 'URL fallback mirror');
+    var num = MBDJ.import.normalizeLine('02) Bersuit - El Tiempo No Para');
+    assert(num.artist === 'Bersuit' && num.title === 'El Tiempo No Para', '02) mirror');
+    var en = MBDJ.import.normalizeLine('Peteco Carabajal – Como Pájaros en el Aire');
+    assert(en.artist === 'Peteco Carabajal', 'en-dash mirror');
+    var sp = MBDJ.import.dedupe([
+      { id: 's1', title: 'El  Tiempo   No Para', artist: 'Bersuit  Vergarabat' },
+      { id: 's2', title: 'El Tiempo No Para', artist: 'Bersuit Vergarabat' }
+    ]);
+    assert(sp.length === 1, 'space-collapse mirror');
+    var empty = MBDJ.import.importSongs([], 'vacío');
+    assert(empty.added === 0 && empty.duplicates === 0, 'empty shape mirror');
+    assert(empty.message === 'No se detectaron canciones. Revisá el formato del archivo o pegá el texto manualmente.', 'empty string mirror');
+  });
   check('draw.js secureIndex en rango + spinning guard', function () {
     assert(MBDJ.draw, 'MBDJ.draw missing');
     for (var i = 0; i < 50; i++) {

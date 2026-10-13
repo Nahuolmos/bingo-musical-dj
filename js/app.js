@@ -90,19 +90,19 @@
     var st = c.state;
     var av = c.available();
     var $ = function (id) { return document.getElementById(id); };
-    $('totalStat').textContent = st.songs.length;
-    $('remainingStat').textContent = av.length;
-    $('drawnStat').textContent = st.songs.filter(function (s) { return s.status !== 'available'; }).length;
+    var counters = reviewCounters(st.songs);
+    $('totalStat').textContent = counters.total;
+    $('remainingStat').textContent = counters.available;
+    $('drawnStat').textContent = counters.drawn;
     $('drawBtn').disabled = !av.length || st.spinning;
     $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || st.spinning;
     $('statusText').textContent = !st.songs.length ? 'Esperando listado de canciones'
       : !av.length ? 'No quedan canciones disponibles'
       : st.current && st.current.status === 'drawn' ? 'Canción sorteada: buscala en VirtualDJ'
       : 'Listo para el próximo sorteo';
-    var q = $('filterInput').value.toLocaleLowerCase();
-    var filtered = st.songs.filter(function (s) { return (s.title + ' ' + s.artist).toLocaleLowerCase().indexOf(q) !== -1; });
+    var filtered = filterSongs(st.songs, $('filterInput').value);
     $('songList').innerHTML = filtered.length ? filtered.map(function (s, i) {
-      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(s.artist || 'Artista no especificado') + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + (s.status === 'played' ? 'Reproducida' : s.status === 'void' ? 'Anulada' : s.status === 'drawn' ? 'Sorteada' : 'Disponible') + '</span></div>';
+      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + (s.status === 'played' ? 'Reproducida' : s.status === 'void' ? 'Anulada' : s.status === 'drawn' ? 'Sorteada' : 'Disponible') + '</span></div>';
     }).join('') : '<div class="empty">No hay coincidencias.</div>';
     $('historyCount').textContent = st.history.length + ' registro' + (st.history.length === 1 ? '' : 's');
     $('historyList').innerHTML = st.history.length ? [].concat(st.history).reverse().map(function (h) {
@@ -194,6 +194,67 @@
     return pairs.map(function (p) {
       return { id: c.makeId(), artist: p[0], title: p[1], status: 'available', addedAt: new Date().toISOString() };
     });
+  }
+
+  // C-04 import-catalog freeze: offline formats accepted on this path are
+  // pasted text lines `Artista - Titulo` (separators `-`/–/—), CSV/TSV rows
+  // `artista,titulo` (`,`/`;`/tab, first cell = artist, rest = title, except
+  // URL-led rows which fall back to line parsing), and the 12-song demo seed.
+  // Header first-line (`titulo/cancion/song/track` + separator) is skipped.
+  // Dedupe key `title|artist` (lowercase, no diacritics, collapsed spaces);
+  // reports are never silent. `toLocaleLowerCase` may vary by OS locale
+  // (Turkish-i edge) — acceptable for v1 volumes; Spanish corpus in tests.
+  //
+  // Locked guard (design decision 5): message + no-op, no `locked` mutation.
+  // Unlock flow (motivo + doble confirm + audit entry) lives in C-11, which
+  // must reuse BLOCKED_MESSAGE verbatim (tests assert copy-paste equality).
+  var BLOCKED_MESSAGE = 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.';
+
+  function isImportBlocked() {
+    return core().state.locked === true;
+  }
+
+  function setImportMessage(msg) {
+    if (typeof document === 'undefined') return;
+    var el = document.getElementById('importMessage');
+    if (el) el.textContent = msg;
+  }
+
+  // Single guard shared by paste/demo/file handlers (design risk mitigation).
+  function guardedImport(items, label) {
+    if (isImportBlocked()) {
+      setImportMessage(BLOCKED_MESSAGE);
+      return { added: 0, duplicates: 0, message: BLOCKED_MESSAGE, blocked: true };
+    }
+    return imp().importSongs(items, label);
+  }
+
+  function handlePasteImport(text) {
+    return guardedImport(imp().parseText(text), 'texto');
+  }
+
+  function handleDemoImport() {
+    return guardedImport(buildDemoSongs(), 'demo');
+  }
+
+  // Review surface helpers (pure, Node-testable; render() consumes them).
+  function reviewCounters(songs) {
+    var list = Array.isArray(songs) ? songs : [];
+    var av = list.filter(function (s) { return s.status === 'available'; }).length;
+    return { total: list.length, available: av, drawn: list.length - av };
+  }
+
+  function filterSongs(songs, q) {
+    var list = Array.isArray(songs) ? songs : [];
+    var needle = String(q == null ? '' : q).trim().toLocaleLowerCase();
+    if (!needle) return list.slice();
+    return list.filter(function (s) {
+      return (s.title + ' ' + s.artist).toLocaleLowerCase().indexOf(needle) !== -1;
+    });
+  }
+
+  function artistLabel(artist) {
+    return artist || 'Artista no especificado';
   }
 
   function buildCsv(history) {
@@ -329,14 +390,14 @@
     $('pasteToggle').addEventListener('click', function () { $('pasteArea').classList.toggle('hidden'); });
     $('cancelPaste').addEventListener('click', function () { $('pasteArea').classList.add('hidden'); });
     $('parsePaste').addEventListener('click', function () {
-      imp().importSongs(imp().parseText($('pasteInput').value), 'texto');
+      handlePasteImport($('pasteInput').value);
       $('pasteInput').value = '';
       $('pasteArea').classList.add('hidden');
     });
     $('filterInput').addEventListener('input', render);
     $('clearSongs').addEventListener('click', handleClearSongs);
     $('resetAll').addEventListener('click', handleResetAll);
-    $('sampleBtn').addEventListener('click', function () { imp().importSongs(buildDemoSongs(), 'demo'); });
+    $('sampleBtn').addEventListener('click', function () { handleDemoImport(); });
     $('exportLog').addEventListener('click', function () {
       var c = core();
       download(new Blob([buildCsv(c.state.history)], { type: 'text/csv;charset=utf-8' }), 'music-bingo-historial.csv');
@@ -345,6 +406,11 @@
     $('fileInput').addEventListener('change', function (e) {
       var f = e.target.files[0];
       if (!f) return;
+      if (isImportBlocked()) {
+        setImportMessage(BLOCKED_MESSAGE);
+        e.target.value = '';
+        return;
+      };
       (async function () {
         try {
           var text = '';
@@ -412,6 +478,14 @@
     handleResetAll: handleResetAll,
     buildDemoSongs: buildDemoSongs,
     buildCsv: buildCsv,
+    BLOCKED_MESSAGE: BLOCKED_MESSAGE,
+    isImportBlocked: isImportBlocked,
+    guardedImport: guardedImport,
+    handlePasteImport: handlePasteImport,
+    handleDemoImport: handleDemoImport,
+    reviewCounters: reviewCounters,
+    filterSongs: filterSongs,
+    artistLabel: artistLabel,
     openPublic: openPublic,
     initApp: initApp
   };

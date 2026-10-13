@@ -174,7 +174,8 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-04] `import-text-csv-demo`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-13, archivado en `openspec/changes/archive/2026-10-13-c-04-import-text-csv-demo/`, spec `openspec/specs/import-catalog/spec.md` con 7 requirements, tests 84/84 green, validate clean)
+- **Seguimiento C-07**: `locked` se activa al primer sorteo en C-07 por contrato (C-02/C-07, design non-goals); el escenario "Import blocked when locked" queda verificado solo a nivel guard unitario (`isImportBlocked`) hasta que C-07 cierre el round-trip sorteo→locked→reject. Smoke manual 1-4 PASS (paste, CSV-;, demo 12→0, filtro/labels); punto 5 (locked reject) FAIL pre-C-07 por diseño.
 - **Scope**: Ruta offline de carga: pegar texto + CSV/TSV + demo + revisión (US-002, US-003, US-004; RN-IMP-01…04), en `js/import.js`
   - `normalizeLine`: ignora vacías, elimina numeración, separa `Artista - Titulo`, detecta CSV/TSV, salta encabezado (igual que v1).
   - `parseText` + `dedupe` por clave normalizada, intra-importación y contra lista; informa `N nueva(s), M duplicado(s) omitido(s)` — nada silencioso.

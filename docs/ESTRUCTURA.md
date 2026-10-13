@@ -50,6 +50,24 @@ ver `index.monolith.html` lado a lado con `index.html`).
 
 Cada `js/*.js` carga en Node sin crash `window`/`document` (wiring diferido a `initApp`/`render`).
 
+## C-04 import-catalog (offline freeze)
+
+- Formatos offline aceptados (pegar texto + demo, sin internet): líneas `Artista - Titulo`
+  (separadores `-`/–/—), filas CSV/TSV `artista,titulo` (`,`/`;`/tab; primera celda = artista,
+  resto = título, salvo filas que empiezan con URL que usan parseo de línea), semilla demo 12
+  vía la misma ruta `importSongs` (repetir no duplica). Primera línea header
+  (`titulo/cancion/song/track` + separador) se saltea.
+- Dedupe normalizado `title|artist` (minúsculas, sin diacríticos, espacios colapsados),
+  intra-lote y contra el listado; reporte nunca silencioso:
+  `N nueva(s), M duplicado(s) omitido(s)`; vacío:
+  `No se detectaron canciones. Revisá el formato del archivo o pegá el texto manualmente.`
+- Sesión bloqueada (`locked=true`): pegar/demo/archivo rechazados con mensaje + no-op
+  (sin mutar `locked`; desbloqueo administrativo en C-11, que reutiliza el string verbatim):
+  `Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.`
+- Guard único `MBDJ.app.isImportBlocked()` + `guardedImport`/`handlePasteImport`/`handleDemoImport`;
+  revisión con `reviewCounters`/`filterSongs`/`artistLabel` (consumidos por `render`).
+- Tests: `node --test tests/import.test.js` + espejo `tests.html` (doble-click `file://`).
+
 ## Verificación
 
 - `css/styles.css` diff cero vs bloque `<style>` monolítico (extracción por script, 7310 bytes).

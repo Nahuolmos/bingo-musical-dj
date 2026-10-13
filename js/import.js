@@ -12,6 +12,8 @@
     throw new Error('MBDJ.core missing: load js/core.js first');
   }
 
+  // C-04 freeze: verbatim parsing contract (spec import-catalog). Numbering
+  // strip / dash-split regexes below are frozen; widen only with a new RED test.
   // Verbatim from monolith (uses makeId from core).
   function normalizeLine(line) {
     var core = getCore();
@@ -53,6 +55,8 @@
     return dedupe(parsed);
   }
 
+  // C-04 freeze: dedupe key order `title|artist` + report strings below are
+  // frozen (`N nueva(s), M duplicado(s) omitido(s)`, `No se detectaron…`).
   // Verbatim from monolith.
   function dedupe(items) {
     var seen = new Set();
