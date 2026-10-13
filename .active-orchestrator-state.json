@@ -1,0 +1,217 @@
+﻿{
+    "discovery":  {
+                      "casos_de_uso":  [
+                                           "Como DJ, quiero sortear canciones sin repetir para no romper el show.",
+                                           "Como público, quiero ver la ruleta y el título legible en el proyector para seguir el juego.",
+                                           "Como DJ, quiero anular un sorteo con motivo y exportar el historial para dejar constancia."
+                                       ],
+                      "competitors":  [
+                                          {
+                                              "name":  "Bingo Maker",
+                                              "notes_file":  "discovery/sources/bingomaker.md"
+                                          },
+                                          {
+                                              "name":  "Bingos Musicales",
+                                              "notes_file":  "discovery/sources/bingosmusicales-com-ar.md"
+                                          },
+                                          {
+                                              "name":  "Sacodejuegos",
+                                              "notes_file":  "discovery/sources/sacodejuegos.md"
+                                          }
+                                      ],
+                      "created_by":  "discovery-research",
+                      "funcionalidades_necesarias":  [
+                                                         "Sorteo sin repetición + agotado claro",
+                                                         "Importar Excel/CSV + pegar texto (Artista - Titulo, Sheets plano, CSV) con fallback offline",
+                                                         "Pública sincronizada + legible",
+                                                         "Anulación con motivo + historial con hora/estado/motivo + export CSV"
+                                                     ],
+                      "funcionalidades_opcionales":  [
+                                                         "Generar cartones propios",
+                                                         "Estadísticas del evento",
+                                                         "Theming por local (backlog)",
+                                                         "Integración VirtualDJ (futuro)"
+                                                     ],
+                      "integraciones":  [
+                                            "v1: ninguna (VirtualDJ manual, Excel/Sheets manual)",
+                                            "futuro: VirtualDJ + Google Sheets directo"
+                                        ],
+                      "preguntas_abiertas":  [
+                                                 "¿Bloqueo de lista en v1-dos-días o post-evento?",
+                                                 "¿Columnas exactas del Excel del evento?",
+                                                 "¿Formato de integración futura VirtualDJ?"
+                                             ],
+                      "problema":  "Animar un bingo musical en vivo sin depender de cartones impresos ni apps genéricas, evitando errores de sorteo manual (repetidos, papelitos, discusiones).",
+                      "reglas_de_negocio":  [
+                                                "No repetir sorteada en la sesión salvo regla futura explícita",
+                                                "Resultado decidido antes de animación",
+                                                "Anulación exige motivo y no reingresa sin regla explícita",
+                                                "Lista bloqueada una vez iniciada salvo acción administrativa (propuesto)"
+                                            ],
+                      "restricciones":  [
+                                            "Offline-first en el evento",
+                                            "Portable en Chrome/Edge sin instalar",
+                                            "Un solo evento en dos días, un solo operador, un solo diseño",
+                                            "Stack lo propone kb-creator"
+                                        ],
+                      "riesgos":  [
+                                      "Refresh borra lista+historial (sin persistencia)",
+                                      "Pública revela antes (spoiler 2.75s)",
+                                      "PDF/DOCX dependen de CDN sin contingencia probada",
+                                      "Timeout huérfano / vaciado mid-giro",
+                                      "Formato real de lista sin validar"
+                                  ],
+                      "sources":  [
+                                      "https://www.bingomaker.com/es/bingo-musical/",
+                                      "https://bingosmusicales.com.ar/",
+                                      "https://sacodejuegos.com/recursos/bingo"
+                                  ],
+                      "usuarios":  [
+                                       "DJ/operador: opera sorteo, carga lista, anula con motivo, exporta (único operador)",
+                                       "Público: mira pantalla pública con cartón físico"
+                                   ]
+                  },
+    "owner":  "active-orchestrator",
+    "step":  "done",
+    "version":  4,
+    "skills":  {
+                    "recommended":  [
+                                        {
+                                            "name":  "mattpocock/skills@tdd",
+                                            "source":  "mattpocock/skills",
+                                            "installs":  "1.1M",
+                                            "why":  "Red-green-refactor para sorteo sin repeticion, lista vacia, 1 cancion, importacion y recuperacion de estado exigidos por AGENTS.md."
+                                        },
+                                        {
+                                            "name":  "anthropics/skills@frontend-design",
+                                            "source":  "anthropics/skills",
+                                            "installs":  "980.8K",
+                                            "why":  "Pantalla publica legible a distancia en proyector y panel DJ separado, sin caer en defaults genericos."
+                                        },
+                                        {
+                                            "name":  "mattpocock/skills@diagnosing-bugs",
+                                            "source":  "mattpocock/skills",
+                                            "installs":  "770.8K",
+                                            "why":  "Riesgos vivos: refresh borra lista+historial, timeout huerfano, vaciado mid-giro y spoiler 2.75s."
+                                        },
+                                        {
+                                            "name":  "vercel-labs/agent-skills@web-design-guidelines",
+                                            "source":  "vercel-labs/agent-skills",
+                                            "installs":  "730.3K",
+                                            "why":  "Guidelines UI portable sin build para Chrome/Edge file:// y operacion offline-first."
+                                        },
+                                        {
+                                            "name":  "mattpocock/skills@code-review",
+                                            "source":  "mattpocock/skills",
+                                            "installs":  "723.3K",
+                                            "why":  "Review Standards+Spec antes del show en 2 dias: no repetir, resultado antes de animacion, historial con motivo."
+                                        },
+                                        {
+                                            "name":  "pbakaus/impeccable@impeccable",
+                                            "source":  "pbakaus/impeccable",
+                                            "installs":  "328.9K",
+                                            "why":  "Polish doble pantalla: jerarquia visual, ruleta, estados vacio/error y accesibilidad en vivo."
+                                        },
+                                        {
+                                            "name":  "101-skills/superpowers@agent-browser",
+                                            "source":  "101-skills/superpowers",
+                                            "installs":  "141.3K",
+                                            "why":  "Verificacion automatizada en Chrome/Edge file:// con BroadcastChannel DJ-publica sin instalar nada."
+                                        },
+                                        {
+                                            "name":  "currents-dev/playwright-best-practices-skill@playwright-best-practices",
+                                            "source":  "currents-dev/playwright-best-practices-skill",
+                                            "installs":  "93K",
+                                            "why":  "E2E ruleta y sincronia DJ-publica, timeouts y flakiness previo al evento."
+                                        },
+                                        {
+                                            "name":  "wshobson/agents@e2e-testing-patterns",
+                                            "source":  "wshobson/agents",
+                                            "installs":  "23.8K",
+                                            "why":  "Patrones E2E doble pantalla y persistencia localStorage/BroadcastChannel."
+                                        },
+                                        {
+                                            "name":  "wshobson/agents@javascript-testing-patterns",
+                                            "source":  "wshobson/agents",
+                                            "installs":  "20K",
+                                            "why":  "Unit/integration vanilla JS con mocks de WebCrypto, localStorage y BroadcastChannel."
+                                        },
+                                        {
+                                            "name":  "firecrawl/anydoc@convert-documents-to-markdown",
+                                            "source":  "firecrawl/anydoc",
+                                            "installs":  "11.5K",
+                                            "why":  "Contingencia import CSV/TXT plano Artista-Titulo cuando pdf.js/mammoth por CDN fallen offline."
+                                        },
+                                        {
+                                            "name":  "testdino-hq/playwright-skill@playwright-skill",
+                                            "source":  "testdino-hq/playwright-skill",
+                                            "installs":  "6.2K",
+                                            "why":  "Alternativa Playwright especifica para smoke test file:// previo al show."
+                                        },
+                                        {
+                                            "name":  "dubzzz/fast-check@javascript-testing-expert",
+                                            "source":  "dubzzz/fast-check",
+                                            "installs":  "239",
+                                            "why":  "Property-based testing para sorteo sin repeticion y resultado decidido antes de animacion. CAUTION: <1K installs, verificar repo."
+                                        }
+                                    ],
+                    "installed":  ["mattpocock/skills@tdd", "anthropics/skills@frontend-design", "mattpocock/skills@code-review", "pbakaus/impeccable@impeccable", "currents-dev/playwright-best-practices-skill@playwright-best-practices", "wshobson/agents@e2e-testing-patterns", "wshobson/agents@javascript-testing-patterns"]
+                },
+    "kb":  {
+               "files":  [
+                             "knowledge-base/01_vision_y_objetivos.md",
+                             "knowledge-base/02_descripcion_general.md",
+                             "knowledge-base/03_actores_y_roles.md",
+                             "knowledge-base/04_modelo_de_datos.md",
+                             "knowledge-base/05_reglas_de_negocio.md",
+                             "knowledge-base/06_funcionalidades.md",
+                             "knowledge-base/07_flujos_principales.md",
+                             "knowledge-base/08_arquitectura_propuesta.md",
+                             "knowledge-base/09_decisiones_y_supuestos.md",
+                             "knowledge-base/10_preguntas_abiertas.md",
+                             "knowledge-base/README.md"
+                         ],
+               "source":  "ingest",
+               "created_by":  "kb-creator",
+               "discovery":  {
+                                 "stack":  "HTML+CSS+Vanilla JS single-file (index.html), BroadcastChannel, WebCrypto, pdf.js/mammoth via CDN (online-only)",
+                                 "domain":  "entretenimiento/eventos (bingo musical en vivo)",
+                                 "system_type":  "web_app",
+                                 "problem":  "Animar un bingo musical en vivo sin depender de cartones impresos ni apps genericas, evitando errores de sorteo manual (repetidos, papelitos, discusiones).",
+                                 "needs_infra":  false,
+                                 "scale":  "single_user"
+                             }
+           },
+    "roadmap":  {
+                    "created_by":  "roadmap-generator",
+                    "source":  "CHANGES.md",
+                    "changes":  [
+                                    "C-01",
+                                    "C-02",
+                                    "C-03",
+                                    "C-04",
+                                    "C-05",
+                                    "C-06",
+                                    "C-07",
+                                    "C-08",
+                                    "C-09",
+                                    "C-10",
+                                    "C-11",
+                                    "C-12",
+                                    "C-13"
+                                ]
+                },
+    "registry":  {
+                    "created_by":  "skill-registry",
+                    "location":  ".atl/skill-registry.md",
+                    "engram":  "skipped-by-instruction",
+                    "skills":  ["tdd", "frontend-design", "code-review", "impeccable", "playwright-best-practices", "e2e-testing-patterns", "javascript-testing-patterns"],
+                    "skill_paths":  ["C:\\Users\\Lenovo\\.agents\\skills\\tdd\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\frontend-design\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\code-review\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\impeccable\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\playwright-best-practices\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\e2e-testing-patterns\\SKILL.md", "C:\\Users\\Lenovo\\.agents\\skills\\javascript-testing-patterns\\SKILL.md"],
+                    "conventions":  ["AGENTS.md", "README.md", "docs/PRODUCT_BRIEF.md", "docs/ACCEPTANCE_CRITERIA.md", "docs/DECISIONS.md", "docs/WORKFLOW.md"]
+                },
+    "agents":  {
+                    "created_by":  "agent-instruction",
+                    "files":  ["AGENTS.md", "CLAUDE.md"],
+                    "reglas_applied":  ["NUNCA single-file", "NUNCA type-module desnudo", "NUNCA CDN ruta principal", "NUNCA repetir ni decidir por animacion", "NUNCA anular sin motivo", "NUNCA perder estado", "NUNCA lista mutable mid-partida", "NUNCA ocultar errores importacion", "NUNCA test sin ejecutar", "NUNCA sin code-review pre-show"]
+                }
+}
