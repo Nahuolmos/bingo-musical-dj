@@ -80,11 +80,38 @@
     }
     assert(MBDJ.draw.secureIndex(1) === 0, 'n=1');
   });
-  check('store.js seam save/load/clear', function () {
+  check('store.js mbdj.v1 autosave (c-06: round-trip + corrupt + no-storage)', function () {
     assert(MBDJ.store, 'MBDJ.store missing');
-    MBDJ.store.save({ songs: [] });
-    MBDJ.store.clear();
-    assert(MBDJ.store.load() === null, 'clear->null');
+    assert(MBDJ.store.KEY === 'mbdj.v1', 'key mbdj.v1');
+    assert(MBDJ.store.SCHEMA_VERSION === 1, 'schema 1');
+    assert(typeof MBDJ.store.isAvailable === 'function', 'isAvailable');
+    var slot = null;
+    var mem = { getItem: function () { return slot; }, setItem: function (k, v) { slot = String(v); }, removeItem: function () { slot = null; } };
+    var snap = { songs: [{ id: 's1', title: 'Matador', artist: 'X', status: 'drawn' }], history: [], current: null, locked: true, startedAt: '2026-10-01T20:00:00.000Z' };
+    assert(MBDJ.store.save(snap, mem).ok === true, 'save ok');
+    var back = MBDJ.store.load(mem);
+    assert(back.ok === true && back.snapshot.locked === true && back.snapshot.schemaVersion === 1, 'round-trip');
+    assert(typeof back.snapshot.savedAt === 'string', 'savedAt');
+    slot = '{"songs":[{';
+    var bad = MBDJ.store.load(mem);
+    assert(bad.ok === false && bad.reason === 'corrupt', 'truncated->corrupt');
+    MBDJ.store.clear(mem);
+    assert(MBDJ.store.load(mem).reason === 'empty', 'clear->empty');
+    var throwing = { getItem: function () { throw new Error('x'); }, setItem: function () { throw new Error('x'); }, removeItem: function () { throw new Error('x'); } };
+    assert(MBDJ.store.isAvailable(throwing) === false, 'no-storage probe');
+    assert(MBDJ.store.save({ songs: [] }, throwing).ok === false, 'save unavailable');
+  });
+  check('app.js restore/banner/discard/beforeunload (c-06: RN-X-03)', function () {
+    assert(typeof MBDJ.app.bootRestore === 'function', 'bootRestore');
+    assert(typeof MBDJ.app.discardSession === 'function', 'discardSession');
+    assert(typeof MBDJ.app.persistCurrentState === 'function', 'persist');
+    assert(typeof MBDJ.app.needsUnloadWarning === 'function', 'guard');
+    assert(MBDJ.app.CORRUPT_MESSAGE === 'Respaldo dañado — se inició vacío, revisá el CSV exportado', 'corrupt verbatim');
+    var b = MBDJ.app.formatRecoveryBanner('2026-10-01T21:15:00.000Z');
+    assert(b.indexOf('Partida recuperada del ') === 0, 'banner prefix');
+    assert(b.indexOf('verificá historial antes de seguir') !== -1, 'banner suffix');
+    var bar = document.getElementById('restoreBanner');
+    assert(bar, 'banner node in index.html');
   });
   check('public.js + app.js seams (canal, demo 12, CSV BOM, public.html)', function () {
     assert(MBDJ.public && MBDJ.public.PUBLIC_CHANNEL === 'music-bingo-dj-on', 'channel');

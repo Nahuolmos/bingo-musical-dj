@@ -212,7 +212,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-06] `session-persistence-recovery`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-13, archivado en `openspec/changes/archive/2026-10-13-c-06-session-persistence-recovery/`, spec `openspec/specs/session-persistence/spec.md` con 6 requirements, tests 96/96 green, validate clean)
 - **Scope**: OBLIGATORIO v1 — la partida de 2 días sobrevive a refresh/cierre o avisa sin ambigüedad (US-012; RN-X-03; IN-06; constraint 3)
   - Autosave en `js/store.js` a `localStorage` (clave versionada p. ej. `mbdj.v1`, decisión `localStorage` vs IndexedDB documentada — se elige `localStorage` por simplicidad/portabilidad salvo justificación) en cada `render()`: `songs`, `history`, `current`, `locked`, `startedAt`, contadores + `savedAt`.
   - Restauración al abrir `index.html`: banner obligatorio "Partida recuperada del HH:MM DD/MM — verificá historial antes de seguir" + botón "Descartar y empezar de cero" (con confirmación). Cubre cierre entre día 1 y día 2 del evento único.

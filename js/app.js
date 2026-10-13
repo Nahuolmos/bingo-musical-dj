@@ -28,6 +28,127 @@
     if (typeof require !== 'undefined') { try { return require('./draw.js'); } catch (e) {} }
     throw new Error('MBDJ.draw missing');
   }
+  function storem() {
+    if (root.MBDJ && root.MBDJ.store) return root.MBDJ.store;
+    if (typeof require !== 'undefined') { try { return require('./store.js'); } catch (e) {} }
+    throw new Error('MBDJ.store missing');
+  }
+
+  // C-06 session-persistence: verbatim banner copies from the spec.
+  var CORRUPT_MESSAGE = 'Respaldo dañado — se inició vacío, revisá el CSV exportado';
+  var NO_STORAGE_MESSAGE = 'Almacenamiento no disponible — la partida no sobrevivirá a una recarga, pero podés seguir jugando.';
+  var RECOVERY_SUFFIX = 'verificá historial antes de seguir';
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function formatRecoveryBanner(savedAt) {
+    var d = new Date(savedAt);
+    var hhmm;
+    var ddmmyyyy;
+    if (isNaN(d.getTime())) {
+      hhmm = '--:--';
+      ddmmyyyy = '--/--';
+    } else {
+      hhmm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+      ddmmyyyy = pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1);
+    }
+    return 'Partida recuperada del ' + hhmm + ' ' + ddmmyyyy + ' — ' + RECOVERY_SUFFIX;
+  }
+
+  // exportedAt marker (ISO) + count at last CSV export; guard fires only when
+  // history grew since then. Cleared on export / discard / fresh boot.
+  var exportedAt = null;
+  var exportedCount = 0;
+
+  function markExported() {
+    var c = core();
+    exportedAt = new Date().toISOString();
+    exportedCount = c.state.history.length;
+    return exportedAt;
+  }
+
+  function needsUnloadWarning() {
+    var c = core();
+    if (!c.state.history.length) return false;
+    if (exportedAt == null) return true;
+    return c.state.history.length > exportedCount;
+  }
+
+  function beforeUnloadHandler(e) {
+    if (!needsUnloadWarning()) return undefined;
+    if (e) {
+      try { e.preventDefault(); } catch (err) {}
+      e.returnValue = '';
+    }
+    return '';
+  }
+
+  function persistCurrentState(storage) {
+    var c = core();
+    var st = c.state;
+    try {
+      return storem().save({
+        songs: st.songs,
+        history: st.history,
+        current: st.current,
+        locked: st.locked,
+        startedAt: st.startedAt
+      }, storage);
+    } catch (e) {
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
+  function resetToEmpty() {
+    var c = core();
+    c.state.songs = [];
+    c.state.history = [];
+    c.state.current = null;
+    c.state.spinning = false;
+    c.state.locked = false;
+  }
+
+  // Validate-then-hydrate: full apply or empty, never partial. Forces
+  // spinning=false (transient UI flag). Returns {status, banner}.
+  function bootRestore(storage) {
+    var c = core();
+    var res;
+    try {
+      res = storem().load(storage);
+    } catch (e) {
+      return { status: 'no-storage', banner: NO_STORAGE_MESSAGE };
+    }
+    if (!res || typeof res !== 'object') return { status: 'empty', banner: null };
+    if (res.ok && res.snapshot) {
+      var s = res.snapshot;
+      c.state.songs = Array.isArray(s.songs) ? s.songs : [];
+      c.state.history = Array.isArray(s.history) ? s.history : [];
+      c.state.current = s.current != null ? s.current : null;
+      c.state.locked = s.locked === true;
+      if (typeof s.startedAt === 'string' && s.startedAt) c.state.startedAt = s.startedAt;
+      c.state.spinning = false;
+      if (!c.state.songs.length && !c.state.history.length) return { status: 'empty', banner: null };
+      return { status: 'restored', banner: formatRecoveryBanner(s.savedAt), savedAt: s.savedAt };
+    }
+    if (res.reason === 'unavailable') return { status: 'no-storage', banner: NO_STORAGE_MESSAGE };
+    if (res.reason === 'empty') return { status: 'empty', banner: null };
+    resetToEmpty();
+    return { status: 'corrupt', banner: CORRUPT_MESSAGE };
+  }
+
+  function discardSession(storage, confirmFn) {
+    var cf = confirmFn;
+    if (typeof cf !== 'function') {
+      if (typeof confirm !== 'undefined') cf = function (m) { return confirm(m); };
+      else return false;
+    }
+    if (!cf('¿Descartar la partida recuperada y empezar de cero?')) return false;
+    try { storem().clear(storage); } catch (e) {}
+    resetToEmpty();
+    exportedAt = null;
+    exportedCount = 0;
+    return true;
+  }
 
   var channel = null;
   if (typeof window !== 'undefined' && ('BroadcastChannel' in window)) {
@@ -109,6 +230,7 @@
       return '<div class="historyitem"><div class="historynum">' + String(h.n).padStart(2, '0') + '</div><div style="flex:1"><b>' + c.esc(h.title) + '</b><span>' + c.esc(h.artist || 'Artista no especificado') + ' · ' + c.esc(h.time) + '</span><span>' + (h.status === 'played' ? '✓ Reproducida' : h.status === 'void' ? '! Anulada por incidencia' : '● Sorteada') + '</span></div></div>';
     }).join('') : '<div class="empty">Todavía no hubo sorteos.</div>';
     broadcast();
+    try { persistCurrentState(); } catch (e) {}
   }
 
   function setCurrentStatus(status) {
@@ -366,9 +488,42 @@
     return true;
   }
 
+  function showBootBanner(boot) {
+    if (typeof document === 'undefined') return;
+    if (!boot || !boot.banner) return;
+    var bar = document.getElementById('restoreBanner');
+    var txt = document.getElementById('restoreBannerText');
+    if (!bar || !txt) return;
+    txt.textContent = boot.banner;
+    var disc = document.getElementById('discardSession');
+    if (disc) disc.style.display = boot.status === 'corrupt' ? 'none' : '';
+    bar.classList.remove('hidden');
+  }
+
+  function hideBootBanner() {
+    if (typeof document === 'undefined') return;
+    var bar = document.getElementById('restoreBanner');
+    if (bar) bar.classList.add('hidden');
+  }
+
   function initApp() {
     if (typeof document === 'undefined') return;
     var $ = function (id) { return document.getElementById(id); };
+    // C-06 boot: validate-then-hydrate + mandatory banner + beforeunload.
+    var boot = null;
+    try { boot = bootRestore(); } catch (e) { boot = null; }
+    showBootBanner(boot);
+    try {
+      if (typeof window !== 'undefined' && window && typeof window.addEventListener === 'function') {
+        window.addEventListener('beforeunload', beforeUnloadHandler);
+      }
+    } catch (e) {}
+    var disc = $('discardSession');
+    if (disc) disc.addEventListener('click', function () {
+      if (discardSession(undefined, undefined)) { hideBootBanner(); render(); }
+    });
+    var dism = $('dismissBanner');
+    if (dism) dism.addEventListener('click', hideBootBanner);
     $('drawBtn').addEventListener('click', handleDrawClick);
     $('confirmBtn').addEventListener('click', function () { setCurrentStatus('played'); });
     $('skipResult').addEventListener('click', function () {
@@ -401,6 +556,7 @@
     $('exportLog').addEventListener('click', function () {
       var c = core();
       download(new Blob([buildCsv(c.state.history)], { type: 'text/csv;charset=utf-8' }), 'music-bingo-historial.csv');
+      try { markExported(); } catch (e) {}
     });
     $('openPublic').addEventListener('click', openPublic);
     $('fileInput').addEventListener('change', function (e) {
@@ -487,7 +643,18 @@
     filterSongs: filterSongs,
     artistLabel: artistLabel,
     openPublic: openPublic,
-    initApp: initApp
+    initApp: initApp,
+    CORRUPT_MESSAGE: CORRUPT_MESSAGE,
+    NO_STORAGE_MESSAGE: NO_STORAGE_MESSAGE,
+    formatRecoveryBanner: formatRecoveryBanner,
+    bootRestore: bootRestore,
+    discardSession: discardSession,
+    persistCurrentState: persistCurrentState,
+    markExported: markExported,
+    needsUnloadWarning: needsUnloadWarning,
+    beforeUnloadHandler: beforeUnloadHandler,
+    showBootBanner: showBootBanner,
+    hideBootBanner: hideBootBanner
   };
 
   if (typeof module !== 'undefined' && module.exports) {
