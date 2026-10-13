@@ -114,6 +114,9 @@
   function setCurrentStatus(status) {
     var c = core();
     var st = c.state;
+    // C-03 draw-engine spinning guard: confirm blocked mid-spin, no effect
+    // until the reveal completes (finishCommit clears spinning).
+    if (st.spinning) return;
     if (!st.current || st.current.status !== 'drawn') return;
     st.current.status = status;
     var h = null;
@@ -146,6 +149,8 @@
     var c = core();
     var st = c.state;
     if (st.spinning || !c.available().length) return null;
+    // Commit-before-render (RN-SOR-02): the song is decided + persisted here;
+    // the reveal callback below only renders via finishCommit() + render().
     var s = drawm().pickAndCommit();
     if (!s) return null;
     var $ = function (id) { return document.getElementById(id); };
@@ -160,8 +165,9 @@
     $('drawBtn').disabled = true;
     $('confirmBtn').disabled = true;
     broadcast();
-    window.setTimeout(function () {
-      st.spinning = false;
+    // C-03 draw-engine: cancellable reveal owned by draw.js (SPIN_MS base only).
+    drawm().scheduleReveal(function () {
+      drawm().finishCommit();
       $('wheel').classList.remove('spin');
       $('wheelText').textContent = s.title.length > 19 ? s.title.slice(0, 17) + '…' : s.title;
       $('wheelSub').textContent = s.artist || 'Tema sorteado';
@@ -171,7 +177,7 @@
       $('resultArtist').textContent = s.artist || 'Artista no especificado';
       $('result').classList.add('show');
       render();
-    }, 2750);
+    });
     return s;
   }
 
@@ -237,6 +243,68 @@
     return { ok: true };
   }
 
+  // C-03 draw-engine: named clear/reset handlers (test seams in Node).
+  // Confirms run first (synchronous modal: no timer can interleave), then the
+  // in-flight reveal is cancelled so no ghost result resurrects cleared state.
+  function handleClearSongs() {
+    var d = drawm();
+    if (typeof document === 'undefined') {
+      d.cancelReveal();
+      d.finishCommit();
+      var c0 = core();
+      c0.state.songs = [];
+      c0.state.history = [];
+      c0.state.current = null;
+      return true;
+    }
+    var c = core();
+    if (!confirm('¿Vaciar el listado de canciones? Esta acción no se puede deshacer.')) return false;
+    if (c.state.history.length && !confirm('Ya hay historial. ¿Querés borrar también el historial y reiniciar la partida?')) return false;
+    d.cancelReveal();
+    d.finishCommit();
+    c.state.songs = [];
+    c.state.history = [];
+    c.state.current = null;
+    var $ = function (id) { return document.getElementById(id); };
+    $('result').classList.remove('show');
+    $('drawHeading').textContent = 'Que empiece el juego.';
+    $('drawDesc').textContent = 'Cargá el listado oficial y sorteá.';
+    var m = document.getElementById('importMessage');
+    if (m) m.textContent = 'Listado vacío.';
+    render();
+    return true;
+  }
+
+  function handleResetAll() {
+    var d = drawm();
+    if (typeof document === 'undefined') {
+      d.cancelReveal();
+      d.finishCommit();
+      var c0 = core();
+      c0.state.songs = [];
+      c0.state.history = [];
+      c0.state.current = null;
+      return true;
+    }
+    var c = core();
+    if (!confirm('¿Reiniciar toda la partida? Se borrarán canciones cargadas, sorteos e historial. Exportá el historial primero si lo necesitás.')) return false;
+    d.cancelReveal();
+    d.finishCommit();
+    c.state.songs = [];
+    c.state.history = [];
+    c.state.current = null;
+    var $ = function (id) { return document.getElementById(id); };
+    $('result').classList.remove('show');
+    $('wheelText').textContent = '¿QUÉ SUENA?';
+    $('wheelSub').textContent = 'Listo para sortear';
+    $('drawHeading').textContent = 'Que empiece el juego.';
+    $('drawDesc').textContent = 'Cargá el listado oficial y sorteá.';
+    var m = document.getElementById('importMessage');
+    if (m) m.textContent = 'Partida reiniciada.';
+    render();
+    return true;
+  }
+
   function initApp() {
     if (typeof document === 'undefined') return;
     var $ = function (id) { return document.getElementById(id); };
@@ -266,36 +334,8 @@
       $('pasteArea').classList.add('hidden');
     });
     $('filterInput').addEventListener('input', render);
-    $('clearSongs').addEventListener('click', function () {
-      var c = core();
-      if (!confirm('¿Vaciar el listado de canciones? Esta acción no se puede deshacer.')) return;
-      if (c.state.history.length && !confirm('Ya hay historial. ¿Querés borrar también el historial y reiniciar la partida?')) return;
-      c.state.songs = [];
-      c.state.history = [];
-      c.state.current = null;
-      $('result').classList.remove('show');
-      $('drawHeading').textContent = 'Que empiece el juego.';
-      $('drawDesc').textContent = 'Cargá el listado oficial y sorteá.';
-      var m = document.getElementById('importMessage');
-      if (m) m.textContent = 'Listado vacío.';
-      render();
-    });
-    $('resetAll').addEventListener('click', function () {
-      var c = core();
-      if (!confirm('¿Reiniciar toda la partida? Se borrarán canciones cargadas, sorteos e historial. Exportá el historial primero si lo necesitás.')) return;
-      c.state.songs = [];
-      c.state.history = [];
-      c.state.current = null;
-      c.state.spinning = false;
-      $('result').classList.remove('show');
-      $('wheelText').textContent = '¿QUÉ SUENA?';
-      $('wheelSub').textContent = 'Listo para sortear';
-      $('drawHeading').textContent = 'Que empiece el juego.';
-      $('drawDesc').textContent = 'Cargá el listado oficial y sorteá.';
-      var m = document.getElementById('importMessage');
-      if (m) m.textContent = 'Partida reiniciada.';
-      render();
-    });
+    $('clearSongs').addEventListener('click', handleClearSongs);
+    $('resetAll').addEventListener('click', handleResetAll);
     $('sampleBtn').addEventListener('click', function () { imp().importSongs(buildDemoSongs(), 'demo'); });
     $('exportLog').addEventListener('click', function () {
       var c = core();
@@ -368,6 +408,8 @@
     writeTransport: writeTransport,
     setCurrentStatus: setCurrentStatus,
     handleDrawClick: handleDrawClick,
+    handleClearSongs: handleClearSongs,
+    handleResetAll: handleResetAll,
     buildDemoSongs: buildDemoSongs,
     buildCsv: buildCsv,
     openPublic: openPublic,

@@ -157,7 +157,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 > C-03, C-04 y C-06 en paralelo tras C-02. C-04 antes de C-05 y C-07. C-06 es OBLIGATORIO v1 (constraint 3), no opcional ni postergable.
 
 ### [C-03] `draw-engine-secure`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-13, archivado en `openspec/changes/archive/2026-10-13-c-03-draw-engine-secure/`)
 - **Scope**: Un único motor aleatorio seguro + timeout cancelable (RN-SOR-02, RN-SOR-03, IN-04), ya en `js/draw.js`
   - Eliminar `draw()` original con sesgo de módulo; conservar solo `secureIndex()` con rejection sampling sobre `crypto.getRandomValues`.
   - Guardar el `setTimeout` del reveal en handle cancelable; `Vaciar lista` / `Reiniciar` lo cancelan (sin reveals fantasma mid-giro). Duración base 2750 ms de giro + buffer VDJ de C-08 por separado (no mezclar).

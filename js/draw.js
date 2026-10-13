@@ -72,8 +72,63 @@
     core.state.spinning = false;
   }
 
+  // C-03 draw-engine: spin base duration (ms). Named + exported so tests pin
+  // it; NEVER merge the C-08 public-screen buffer (REVEAL_DELAY_MS) into this.
+  var SPIN_MS = 2750;
+
+  // C-03 draw-engine: cancellable reveal handle. Single owner beside `spinning`
+  // state, so clear/reset paths cancel by construction (no ghost reveals).
+  // Node-safe seam: tests inject { setTimeoutFn, clearTimeoutFn }; browsers use
+  // the globals. No libs, no modules — file:// compatible.
+  var revealTimer = null;
+  var timerFns = null;
+
+  function setTimerFns(fns) { timerFns = fns || null; }
+  function resetTimerFns() { timerFns = null; }
+
+  function getSetTimeout() {
+    if (timerFns && typeof timerFns.setTimeoutFn === 'function') return timerFns.setTimeoutFn;
+    return function (cb, ms) { return setTimeout(cb, ms); };
+  }
+
+  function getClearTimeout() {
+    if (timerFns && typeof timerFns.clearTimeoutFn === 'function') return timerFns.clearTimeoutFn;
+    return function (id) { clearTimeout(id); };
+  }
+
+  function scheduleReveal(fn, delayMs) {
+    cancelReveal();
+    var delay = (typeof delayMs === 'number') ? delayMs : SPIN_MS;
+    revealTimer = getSetTimeout()(function () {
+      revealTimer = null; // null-before-invoke: a racing cancel stays a safe no-op
+      fn();
+    }, delay);
+    return revealTimer;
+  }
+
+  // Idempotent; clears the timer handle only — `spinning` resets via finishCommit.
+  function cancelReveal() {
+    if (revealTimer === null || revealTimer === undefined) return false;
+    var id = revealTimer;
+    revealTimer = null;
+    try { getClearTimeout()(id); } catch (e) { /* already fired: no-op */ }
+    return true;
+  }
+
+  function isRevealing() { return revealTimer !== null && revealTimer !== undefined; }
+
   root.MBDJ = root.MBDJ || {};
-  root.MBDJ.draw = { secureIndex: secureIndex, pickAndCommit: pickAndCommit, finishCommit: finishCommit };
+  root.MBDJ.draw = {
+    secureIndex: secureIndex,
+    pickAndCommit: pickAndCommit,
+    finishCommit: finishCommit,
+    SPIN_MS: SPIN_MS,
+    scheduleReveal: scheduleReveal,
+    cancelReveal: cancelReveal,
+    isRevealing: isRevealing,
+    setTimerFns: setTimerFns,
+    resetTimerFns: resetTimerFns
+  };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = root.MBDJ.draw;
