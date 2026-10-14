@@ -193,7 +193,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-05] `import-file-excel-pdf`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-05-import-file-excel-pdf/`, spec `openspec/specs/import-file/spec.md` nueva con 6 requirements, tests 224/224 green — import-file 10/10, validate clean; drill manual `file://` sin red OK "Funciona, sigamos")
 - **Scope**: Carga por archivo con contingencia offline probada (US-001; RN-IMP-01/02; IN-05, IN-07)
   - Decidir `.xlsx`: o bien SheetJS **vendorizado local** (sin CDN, sigue offline y multi-archivo: `vendor/sheetjs/`), o bien procedimiento oficial "exportar a CSV / pegar texto" + mensaje que lo indica.
   - `fileInput.change`: TXT/CSV/TSV vía `File.text()`; PDF vía pdf.js 3.11.174 + worker, DOCX vía mammoth 1.8.0, ambos `loadScript` desde cdnjs bajo demanda.

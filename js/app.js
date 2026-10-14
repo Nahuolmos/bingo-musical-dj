@@ -595,6 +595,30 @@
   // must reuse BLOCKED_MESSAGE verbatim (tests assert copy-paste equality).
   var BLOCKED_MESSAGE = 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.';
 
+  // C-05 import-file: extension matrix + frozen file copies (additive).
+  // TXT/CSV/TSV + vendored XLSX stay offline; PDF/DOCX stay progressive
+  // via cdnjs with the visible paste-text fallback. First sheet only.
+  var INCOMPATIBLE_MESSAGE = 'Formato no compatible. Usá PDF, DOCX, TXT, CSV o XLSX.';
+  var XLSX_EMPTY_MESSAGE = 'No se detectaron canciones en el Excel. Exportá la hoja a CSV o copiá el texto y usá "Pegar texto".';
+  var FILE_READ_ERROR_MESSAGE = 'No se pudo leer el archivo. Si es PDF/DOCX, verificá internet o copiá el texto y usá "Pegar texto".';
+  var XLSX_VENDOR_SRC = 'vendor/sheetjs/xlsx.full.min.js';
+
+  function getFileExtension(fileName) {
+    var n = String(fileName == null ? '' : fileName);
+    var i = n.lastIndexOf('.');
+    if (i === -1) return '';
+    return n.slice(i + 1).toLowerCase();
+  }
+
+  function getFileKind(fileName) {
+    var ext = getFileExtension(fileName);
+    if (ext === 'txt' || ext === 'csv' || ext === 'tsv') return 'text';
+    if (ext === 'xlsx') return 'xlsx';
+    if (ext === 'pdf') return 'pdf';
+    if (ext === 'docx') return 'docx';
+    return 'incompatible';
+  }
+
   function isImportBlocked() {
     return core().state.locked === true;
   }
@@ -683,15 +707,20 @@
   }
 
   // C-11 offline contingency: pdf.js/mammoth load ONLY here via guarded
-  // loadScript, and ONLY for PDF/DOCX. Offline (or CDN-blocked) failure
+  // loadScript, and ONLY for PDF/DOCX. C-05 adds the vendored XLSX path
+  // (relative vendor/sheetjs, never CDN). Offline (or CDN-blocked) failure
   // lands on the visible paste-text fallback message below — the TXT/CSV/
-  // paste/demo route never touches the network. No other file references
-  // cdnjs (verify: grep -r "cdnjs" js/ index.html).
+  // TSV/XLSX/paste/demo route never touches the network. Only PDF/DOCX
+  // reference cdnjs (verify: grep -r "cdnjs" js/ index.html).
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       var existing = Array.prototype.slice.call(document.scripts).find(function (s) { return s.src === src; });
       if (existing) {
-        if (window.pdfjsLib || window.mammoth) return resolve();
+        if (String(src).indexOf('xlsx') !== -1) {
+          if (window.XLSX) return resolve();
+        } else if (window.pdfjsLib || window.mammoth) {
+          return resolve();
+        }
         existing.addEventListener('load', resolve, { once: true });
         existing.addEventListener('error', reject, { once: true });
         return;
@@ -902,10 +931,21 @@
       (async function () {
         try {
           var text = '';
-          var ext = f.name.split('.').pop().toLowerCase();
-          if (ext === 'txt' || ext === 'csv' || ext === 'tsv') {
+          var ext = getFileExtension(f.name);
+          var kind = getFileKind(f.name);
+          if (kind === 'text') {
             text = await f.text();
             imp().importSongs(imp().parseText(text), f.name);
+          } else if (kind === 'xlsx') {
+            var mx = document.getElementById('importMessage');
+            if (mx) mx.textContent = 'Leyendo Excel…';
+            await loadScript(XLSX_VENDOR_SRC);
+            var songs = imp().parseXlsxBuffer(await f.arrayBuffer());
+            if (!songs.length) {
+              if (mx) mx.textContent = XLSX_EMPTY_MESSAGE;
+            } else {
+              imp().importSongs(songs, f.name);
+            }
           } else if (ext === 'pdf') {
             var m1 = document.getElementById('importMessage');
             if (m1) m1.textContent = 'Leyendo PDF…';
@@ -926,12 +966,13 @@
             imp().importSongs(imp().parseText(out.value), f.name);
           } else {
             var m3 = document.getElementById('importMessage');
-            if (m3) m3.textContent = 'Formato no compatible. Usá PDF, DOCX, TXT o CSV.';
+            if (m3) m3.textContent = INCOMPATIBLE_MESSAGE;
           }
         } catch (err) {
           if (typeof console !== 'undefined') console.error(err);
           var m4 = document.getElementById('importMessage');
-          if (m4) m4.textContent = 'No se pudo leer el archivo. Si es PDF/DOCX, verificá internet o copiá el texto y usá “Pegar texto”.';
+          var failedExt = getFileExtension(f && f.name);
+          if (m4) m4.textContent = (failedExt === 'xlsx') ? XLSX_EMPTY_MESSAGE : FILE_READ_ERROR_MESSAGE;
         } finally {
           e.target.value = '';
         }
@@ -980,6 +1021,12 @@
     sanitizeCsvCell: sanitizeCsvCell,
     historyExportNotice: historyExportNotice,
     BLOCKED_MESSAGE: BLOCKED_MESSAGE,
+    INCOMPATIBLE_MESSAGE: INCOMPATIBLE_MESSAGE,
+    XLSX_EMPTY_MESSAGE: XLSX_EMPTY_MESSAGE,
+    FILE_READ_ERROR_MESSAGE: FILE_READ_ERROR_MESSAGE,
+    XLSX_VENDOR_SRC: XLSX_VENDOR_SRC,
+    getFileExtension: getFileExtension,
+    getFileKind: getFileKind,
     isImportBlocked: isImportBlocked,
     guardedImport: guardedImport,
     handlePasteImport: handlePasteImport,

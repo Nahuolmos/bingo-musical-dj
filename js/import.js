@@ -97,12 +97,53 @@
     return { added: added, duplicates: items.length - added, message: msg };
   }
 
+  // C-05 import-file: xlsx→text bridge (additive, frozen pipeline untouched).
+  // Reads the FIRST worksheet only via the vendored SheetJS global
+  // (`vendor/sheetjs/xlsx.full.min.js`, loaded on demand, never CDN),
+  // serializes rows as `cells.join(',')` lines and reuses parseText/dedupe.
+  // Pure seam: tests inject a fake `XLSX` global, no network involved.
+  function getXlsxLib() {
+    if (root && root.XLSX) return root.XLSX;
+    if (typeof globalThis !== 'undefined' && globalThis.XLSX) return globalThis.XLSX;
+    if (typeof window !== 'undefined' && window.XLSX) return window.XLSX;
+    return null;
+  }
+
+  function parseXlsxBuffer(buf) {
+    var lib = getXlsxLib();
+    if (!lib) throw new Error('XLSX no disponible: cargá vendor/sheetjs/xlsx.full.min.js');
+    var wb = lib.read(buf, { type: 'array' });
+    if (!wb || !wb.SheetNames || !wb.SheetNames.length) return [];
+    var ws = wb.Sheets[wb.SheetNames[0]];
+    var rows = lib.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    if (!rows || !rows.length) return [];
+    var lines = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!Array.isArray(r)) {
+        var s = String(r == null ? '' : r).trim();
+        if (s) lines.push(s);
+        continue;
+      }
+      var cells = r.map(function (c) { return String(c == null ? '' : c).trim(); });
+      var allEmpty = true;
+      for (var j = 0; j < cells.length; j++) {
+        if (cells[j]) { allEmpty = false; break; }
+      }
+      if (allEmpty) continue;
+      lines.push(cells.join(','));
+    }
+    if (!lines.length) return [];
+    return parseText(lines.join('\n'));
+  }
+
   root.MBDJ = root.MBDJ || {};
   root.MBDJ.import = {
     normalizeLine: normalizeLine,
     parseText: parseText,
     dedupe: dedupe,
-    importSongs: importSongs
+    importSongs: importSongs,
+    parseXlsxBuffer: parseXlsxBuffer
   };
 
   if (typeof module !== 'undefined' && module.exports) {

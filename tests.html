@@ -74,6 +74,42 @@
     assert(empty.added === 0 && empty.duplicates === 0, 'empty shape mirror');
     assert(empty.message === 'No se detectaron canciones. Revisá el formato del archivo o pegá el texto manualmente.', 'empty string mirror');
   });
+  check('c-05 espejo: parseXlsxBuffer primera hoja offline (mismos casos que Node)', function () {
+    assert(typeof MBDJ.import.parseXlsxBuffer === 'function', 'parseXlsxBuffer seam');
+    var saved = window.XLSX;
+    try {
+      window.XLSX = {
+        read: function () { return { SheetNames: ['Hoja1'], Sheets: { Hoja1: {} } }; },
+        utils: { sheet_to_json: function () { return [['Queen', "Don't Stop Me Now"], ['Dua Lipa', 'Levitating']]; } }
+      };
+      var rows = MBDJ.import.parseXlsxBuffer(new Uint8Array([1, 2]).buffer);
+      assert(rows.length === 2 && rows[0].artist === 'Queen', 'xlsx happy mirror');
+      window.XLSX.utils.sheet_to_json = function () { return []; };
+      assert(MBDJ.import.parseXlsxBuffer(new Uint8Array([3]).buffer).length === 0, 'xlsx empty mirror');
+      window.XLSX.utils.sheet_to_json = function () { return [['', '  '], ['Soda Stereo', 'De Música Ligera']]; };
+      var skip = MBDJ.import.parseXlsxBuffer(new Uint8Array([4]).buffer);
+      assert(skip.length === 1 && skip[0].artist === 'Soda Stereo', 'xlsx skip-empty mirror');
+    } finally {
+      if (saved === undefined) { try { delete window.XLSX; } catch (e) { window.XLSX = undefined; } }
+      else window.XLSX = saved;
+    }
+  });
+  check('c-05 espejo: matriz extensiones + copias offline + candado (mismos literales que Node)', function () {
+    assert(typeof MBDJ.app.getFileKind === 'function', 'getFileKind seam');
+    assert(MBDJ.app.getFileKind('tema.txt') === 'text', 'txt kind');
+    assert(MBDJ.app.getFileKind('lista.CSV') === 'text', 'csv kind');
+    assert(MBDJ.app.getFileKind('lista.tsv') === 'text', 'tsv kind');
+    assert(MBDJ.app.getFileKind('lista.XLSX') === 'xlsx', 'xlsx kind');
+    assert(MBDJ.app.getFileKind('doc.pdf') === 'pdf', 'pdf kind');
+    assert(MBDJ.app.getFileKind('doc.DOCX') === 'docx', 'docx kind');
+    assert(MBDJ.app.getFileKind('lista.png') === 'incompatible', 'png incompatible');
+    assert(MBDJ.app.getFileKind('lista.xlsx.exe') === 'incompatible', 'doble extension incompatible');
+    assert(MBDJ.app.INCOMPATIBLE_MESSAGE === 'Formato no compatible. Usá PDF, DOCX, TXT, CSV o XLSX.', 'incompatible copy');
+    assert(MBDJ.app.XLSX_EMPTY_MESSAGE === 'No se detectaron canciones en el Excel. Exportá la hoja a CSV o copiá el texto y usá "Pegar texto".', 'xlsx-empty copy');
+    assert(MBDJ.app.FILE_READ_ERROR_MESSAGE === 'No se pudo leer el archivo. Si es PDF/DOCX, verificá internet o copiá el texto y usá "Pegar texto".', 'pdf/docx fallback copy');
+    assert(MBDJ.app.XLSX_VENDOR_SRC === 'vendor/sheetjs/xlsx.full.min.js', 'vendor path');
+    assert(MBDJ.app.BLOCKED_MESSAGE === 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.', 'blocked verbatim');
+  });
   check('draw.js secureIndex en rango + spinning guard', function () {
     assert(MBDJ.draw, 'MBDJ.draw missing');
     for (var i = 0; i < 50; i++) {
