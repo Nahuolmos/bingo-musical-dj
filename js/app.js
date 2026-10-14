@@ -302,6 +302,21 @@
     // buffer — isPublicBuffer() OR-ed with spinning (single predicate).
     $('drawBtn').disabled = !av.length || st.spinning || isPublicBuffer();
     $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || st.spinning || isPublicBuffer();
+    // C-11 session-lock: every mutation control stands down while locked
+    // (import/file/edit/clear/reset) and the admin unlock arms itself ONLY
+    // while locked. Single isImportBlocked() predicate — one funnel, no drift.
+    // Null-safe: some harnesses stub a subset of ids. Filter stays enabled
+    // (search never mutates).
+    (function lockDisables() {
+      var off = st.locked === true;
+      var ids = ['fileInput', 'pasteToggle', 'parsePaste', 'sampleBtn', 'clearSongs', 'resetAll'];
+      for (var di = 0; di < ids.length; di++) {
+        var node = $(ids[di]);
+        if (node) node.disabled = off;
+      }
+      var unlock = $('unlockBtn');
+      if (unlock) unlock.disabled = !off;
+    })();
     $('statusText').textContent = !st.songs.length ? 'Esperando listado de canciones'
       : !av.length ? 'No quedan canciones disponibles'
       : st.current && st.current.status === 'drawn' ? 'Canción sorteada: buscala en VirtualDJ'
@@ -325,7 +340,11 @@
         var mv = motivoForSong(s.id);
         if (mv) pill = 'Anulada — ' + c.esc(mv);
       }
-      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + pill + '</span></div>';
+      // C-11 edit affordance: per-row correction via handleEditRequest
+      // (prompt seam). Disabled while locked — the seam refuses anyway
+      // (defense in depth: UI disable + guard-first refusal).
+      var editOff = (st.locked === true) ? ' disabled' : '';
+      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + pill + '</span><button class="subtle" data-edit-id="' + c.esc(s.id) + '"' + editOff + '>Editar</button></div>';
     }).join('') : '<div class="empty">No hay coincidencias.</div>';
     $('historyCount').textContent = st.history.length + ' registro' + (st.history.length === 1 ? '' : 's');
     $('historyList').innerHTML = st.history.length ? [].concat(st.history).reverse().map(function (h) {
@@ -403,6 +422,67 @@
     return true;
   }
 
+  // C-11 session-lock: administrative unlock seam (the single WRITER of
+  // song-less unlock audit entries). Mirrors handleVoidRequest gate order:
+  // locked? → prompt motivo → trim/empty-check → confirm #1 → confirm #2 →
+  // commit (entry + locked=false + render which persists via C-06 autosave).
+  // Returns true only when the unlock commits; false leaves state untouched.
+  // Guard-first: on an unlocked session or an aborted prompt/confirm, no
+  // modal beyond the aborted one fires, no timer is touched, nothing mutates.
+  function handleUnlockRequest(promptFn, confirmFn) {
+    var c = core();
+    var st = c.state;
+    if (st.locked !== true) return false;
+    var pf = (typeof promptFn === 'function') ? promptFn
+      : (typeof prompt !== 'undefined' ? function (m) { return prompt(m); } : null);
+    if (!pf) return false;
+    var raw = pf('Motivo del desbloqueo administrativo (obligatorio):');
+    if (raw == null) return false;
+    var motivo = String(raw).trim();
+    if (!motivo) return false;
+    var cf = (typeof confirmFn === 'function') ? confirmFn
+      : (typeof confirm !== 'undefined' ? function (m) { return confirm(m); } : null);
+    if (!cf) return false;
+    if (!cf('¿Desbloquear la lista para edición administrativa? Quedará registro en el historial.')) return false;
+    if (!cf('Confirmá el desbloqueo: la lista quedará editable.')) return false;
+    st.history.push(c.createUnlockEntry(st.history.length + 1, motivo));
+    st.locked = false;
+    if (typeof document !== 'undefined') render();
+    return true;
+  }
+
+  // C-11 session-lock: list-edit seam (title/artist correction). While locked
+  // there is no admin path through here — refusal is total via the shared
+  // BLOCKED_MESSAGE funnel (guard-first: prompt never fires). Unlocked, two
+  // prompts collect the new title (mandatory) + artist; cancel/empty title
+  // aborts with no mutation. Edits write no history entry (the unlock itself
+  // is the audit record) and never change song status.
+  function handleEditRequest(songId, promptFn) {
+    var c = core();
+    var st = c.state;
+    if (st.locked === true) {
+      setImportMessage(BLOCKED_MESSAGE);
+      return { blocked: true, message: BLOCKED_MESSAGE };
+    }
+    var song = null;
+    for (var i = 0; i < st.songs.length; i++) {
+      if (st.songs[i].id === songId) { song = st.songs[i]; break; }
+    }
+    if (!song) return { ok: false, reason: 'not-found' };
+    var pf = (typeof promptFn === 'function') ? promptFn
+      : (typeof prompt !== 'undefined' ? function (m, preset) { return prompt(m, preset); } : null);
+    if (!pf) return { ok: false, reason: 'no-prompt' };
+    var rawTitle = pf('Nuevo título:', song.title);
+    if (rawTitle == null) return { ok: false, reason: 'aborted' };
+    var title = String(rawTitle).trim();
+    if (!title) return { ok: false, reason: 'aborted' };
+    var rawArtist = pf('Nuevo artista (vacío = sin artista):', song.artist);
+    if (rawArtist == null) return { ok: false, reason: 'aborted' };
+    song.title = title;
+    song.artist = String(rawArtist).trim();
+    if (typeof document !== 'undefined') render();
+    return { ok: true, song: song };
+  }
   // C-09 confirm-void: copy seam for manual VirtualDJ cue (clipboard +
   // legacy prompt fallback). Pure boundary: tests inject mocks, the click
   // handler injects the real clipboard/prompt. Never mutates draw state.
@@ -602,6 +682,11 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
+  // C-11 offline contingency: pdf.js/mammoth load ONLY here via guarded
+  // loadScript, and ONLY for PDF/DOCX. Offline (or CDN-blocked) failure
+  // lands on the visible paste-text fallback message below — the TXT/CSV/
+  // paste/demo route never touches the network. No other file references
+  // cdnjs (verify: grep -r "cdnjs" js/ index.html).
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       var existing = Array.prototype.slice.call(document.scripts).find(function (s) { return s.src === src; });
@@ -781,6 +866,21 @@
     $('filterInput').addEventListener('input', render);
     $('clearSongs').addEventListener('click', handleClearSongs);
     $('resetAll').addEventListener('click', handleResetAll);
+    // C-11 admin unlock: explicit button, real prompt/confirm injected into
+    // the tested seam. Armed only while locked (render disables otherwise).
+    var unlockBtn = $('unlockBtn');
+    if (unlockBtn) unlockBtn.addEventListener('click', function () {
+      handleUnlockRequest();
+    });
+    // C-11 list edit: delegation survives render() re-paints (container
+    // persists, rows are re-created). Locked clicks still reach the seam,
+    // which refuses with BLOCKED_MESSAGE (UI disable is not the guard).
+    var songList = $('songList');
+    if (songList && typeof songList.addEventListener === 'function') songList.addEventListener('click', function (e) {
+      var t = e && e.target;
+      var editId = t && t.getAttribute ? t.getAttribute('data-edit-id') : null;
+      if (editId) handleEditRequest(editId);
+    });
     $('sampleBtn').addEventListener('click', function () { handleDemoImport(); });
     $('exportLog').addEventListener('click', function () {
       var c = core();
@@ -868,6 +968,8 @@
     writeTransport: writeTransport,
     setCurrentStatus: setCurrentStatus,
     handleVoidRequest: handleVoidRequest,
+    handleUnlockRequest: handleUnlockRequest,
+    handleEditRequest: handleEditRequest,
     formatCopyText: formatCopyText,
     handleCopyRequest: handleCopyRequest,
     handleDrawClick: handleDrawClick,

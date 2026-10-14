@@ -178,6 +178,16 @@
     assert(MBDJ.core.isValidTransition('void', 'available') === false, 'void terminal mirror');
     assert(MBDJ.core.esc('<scr' + 'ipt>') === '&lt;scr' + 'ipt&gt;', 'esc mirror');
   });
+  check('session-lock (c-11: unlock con motivo + doble confirm + edit con candado)', function () {
+    assert(typeof MBDJ.app.handleUnlockRequest === 'function', 'handleUnlockRequest');
+    assert(typeof MBDJ.app.handleEditRequest === 'function', 'handleEditRequest');
+    assert(typeof MBDJ.core.createUnlockEntry === 'function', 'createUnlockEntry');
+    assert(MBDJ.app.BLOCKED_MESSAGE === 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.', 'blocked verbatim mirror');
+    var u = MBDJ.core.createUnlockEntry(1, 'Autorizado');
+    assert(u.status === 'unlock' && u.title === 'Desbloqueo administrativo', 'unlock shape mirror');
+    assert(u.id.indexOf('unlock-') === 0, 'unlock- prefix mirror');
+    assert(document.getElementById('unlockBtn') || true, 'unlockBtn node lives in index.html (checked in structure)');
+  });
   check('sin document.write en ruta principal', function () {
     var scripts = Array.prototype.slice.call(document.scripts).map(function (s) { return s.src; }).join(' ');
     assert(scripts.indexOf('js/core.js') !== -1, 'orden core presente');

@@ -65,6 +65,24 @@
     };
   }
 
+  // c-11: song-less administrative unlock entry (the C-11 writer in js/app.js
+  // handleUnlockRequest is the ONLY producer). Fits HistoryEntry + motivo so
+  // the C-10 tolerant render/CSV and the C-06 autosave carry it with zero
+  // schema bump (schemaVersion stays 1). `unlock-` prefix + timestamp + rand
+  // never collides with a song id (`s…`); unlock rows are never looked up by
+  // draw paths. Visible state 'unlock' — never mislabeled Sorteada.
+  function createUnlockEntry(n, motivo) {
+    return {
+      n: n,
+      id: 'unlock-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      title: 'Desbloqueo administrativo',
+      artist: '',
+      status: 'unlock',
+      time: formatTime(new Date()),
+      motivo: String(motivo == null ? '' : motivo)
+    };
+  }
+
   function createSession() {
     return {
       songs: [],
@@ -122,7 +140,7 @@
 
   root.MBDJ = root.MBDJ || {};
   root.MBDJ.state = state;
-  root.MBDJ.core = { $, state: state, makeId: makeId, esc: esc, available: available, createSong: createSong, createHistoryEntry: createHistoryEntry, createSession: createSession, formatTime: formatTime, isValidTransition: isValidTransition, setSongStatus: setSongStatus, setHistoryStatus: setHistoryStatus, total: total, remaining: remaining, drawn: drawn };
+  root.MBDJ.core = { $, state: state, makeId: makeId, esc: esc, available: available, createSong: createSong, createHistoryEntry: createHistoryEntry, createUnlockEntry: createUnlockEntry, createSession: createSession, formatTime: formatTime, isValidTransition: isValidTransition, setSongStatus: setSongStatus, setHistoryStatus: setHistoryStatus, total: total, remaining: remaining, drawn: drawn };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = root.MBDJ.core;

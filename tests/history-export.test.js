@@ -293,7 +293,7 @@ describe('c-10 2.1: delayed public reveal never duplicates history/CSV rows', ()
     assert.equal(rows.length, 2, 'header + exactly one data row, got: ' + JSON.stringify(rows));
   });
 
-  it('single-writer invariant: only js/draw.js appends history entries (static source check)', () => {
+  it('two-writer invariant: js/draw.js (draws) + js/app.js (C-11 unlock writer) append history entries', () => {
     // Arrange: scan every production module for history appends
     const fs = require('node:fs');
     const writers = [];
@@ -301,8 +301,9 @@ describe('c-10 2.1: delayed public reveal never duplicates history/CSV rows', ()
       const src = fs.readFileSync(path.join(root, 'js', f), 'utf8');
       if (src.includes('.history.push(')) writers.push(f);
     }
-    // Assert: exactly one writer (C-11 will extend this allowlist when it ships the unlock writer)
-    assert.deepEqual(writers, ['draw.js']);
+    // Assert: draws stay in draw.js; the ONLY other writer is the C-11 admin
+    // unlock seam in app.js (reservation ended — see c-11 spec history-export)
+    assert.deepEqual(writers, ['draw.js', 'app.js']);
   });
 });
 
@@ -422,7 +423,7 @@ describe('c-10 2.3: void motivo renders visible and inert in list + history', ()
   });
 });
 
-// ---- 3.1: unlock-entry reservation — tolerant render/export, no unlock behavior ----
+// ---- 3.1: unlock entries — tolerant render/export + C-11 writer transition ----
 describe('c-10 3.1: admin unlock entries render and export without breaking order/parse', () => {
   let core;
   let draw;
@@ -483,13 +484,19 @@ describe('c-10 3.1: admin unlock entries render and export without breaking orde
     }
   });
 
-  it('no unlock behavior ships in this change (no writer, guard, or lock mutation)', () => {
-    // Arrange: static source check over production modules
+  it('C-11 writer ships the unlock behavior (reservation ended: single writer + guards)', () => {
+    // Arrange: static source check over production modules — the C-10
+    // "no unlock behavior" reservation ends here per specs/history-export.
     const fs = require('node:fs');
     const srcs = ['app.js', 'draw.js', 'core.js'].map((f) => fs.readFileSync(path.join(root, 'js', f), 'utf8')).join('\n');
-    // Assert: tolerance only — C-11 owns the writer
-    assert.ok(!srcs.includes('createUnlockEntry'), 'no unlock entry factory');
-    assert.ok(!srcs.includes('handleUnlock'), 'no unlock handler');
+    const appSrc = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8');
+    // Assert: factory + seam exist, unlock- ids, double confirm naming the
+    // consequence, shared BLOCKED_MESSAGE funnel (verbatim reuse, no drift)
+    assert.ok(srcs.includes('createUnlockEntry'), 'unlock entry factory ships');
+    assert.ok(srcs.includes('handleUnlockRequest'), 'unlock handler ships');
+    assert.ok(srcs.includes("'unlock-'"), 'unlock- id prefix');
+    assert.ok(appSrc.includes('la lista quedará editable'), 'double-confirm names the consequence');
+    assert.ok(appSrc.includes('Usá el Desbloqueo administrativo (C-11)'), 'shared blocked funnel reused verbatim');
   });
 });
 

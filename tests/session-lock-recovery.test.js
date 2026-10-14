@@ -155,6 +155,96 @@ describe('regression: locked session refuses clear/reset (no brick into locked+e
   });
 });
 
+describe('c-11 1.2: locked session refuses edits, file imports, and mutation controls', () => {
+  let core;
+  let draw;
+  let store;
+  let app;
+
+  beforeEach(() => {
+    ({ core, draw, store, app } = loadDeps());
+    seedSongs(core);
+    core.state.locked = true;
+  });
+
+  afterEach(() => { teardown(draw, app, core); });
+
+  it('edit-with-locked is refused without admin path (prompt never fires, catalog unchanged)', () => {
+    // Arrange
+    const songsBefore = JSON.stringify(core.state.songs);
+    // Act: guard-first refusal — the prompt boundary must not even fire
+    const ret = app.handleEditRequest('r-s1', () => { throw new Error('prompt must not fire on a blocked edit'); });
+    // Assert
+    assert.equal(ret.blocked, true);
+    assert.equal(JSON.stringify(core.state.songs), songsBefore);
+    assert.equal(core.state.locked, true);
+  });
+
+  it('file import is refused while locked (no read, blocked message verbatim)', () => {
+    // Arrange: the file-input path shares the guardedImport funnel
+    const songsBefore = JSON.stringify(core.state.songs);
+    // Act
+    const ret = app.guardedImport([{ id: 'x', title: 'T', artist: 'A' }], 'archivo');
+    // Assert: verbatim BLOCKED_MESSAGE, zero mutation
+    assert.equal(ret.blocked, true);
+    assert.equal(ret.message, app.BLOCKED_MESSAGE);
+    assert.equal(ret.message, 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.');
+    assert.equal(JSON.stringify(core.state.songs), songsBefore);
+  });
+
+  it('locked render() disables every mutation control and arms the admin unlock', () => {
+    // Arrange: stub DOM, locked mid-partida
+    const doc = stubDocument();
+    global.document = doc;
+    try {
+      // Act
+      app.render();
+    } finally {
+      delete global.document;
+    }
+    // Assert: all mutation controls disabled while locked, unlock enabled
+    for (const id of ['fileInput', 'pasteToggle', 'parsePaste', 'sampleBtn', 'clearSongs', 'resetAll']) {
+      assert.equal(doc._els[id].disabled, true, id + ' disabled while locked');
+    }
+    assert.equal(doc._els.unlockBtn.disabled, false, 'unlockBtn armed while locked');
+    assert.ok(doc._els.songList.innerHTML.indexOf('Editar') !== -1, 'per-row edit affordance renders');
+    assert.ok(doc._els.songList.innerHTML.indexOf('disabled') !== -1, 'per-row edit disabled while locked');
+  });
+
+  it('unlocked render() re-enables mutation controls and stands down the unlock', () => {
+    // Arrange
+    core.state.locked = false;
+    const doc = stubDocument();
+    global.document = doc;
+    try {
+      // Act
+      app.render();
+    } finally {
+      delete global.document;
+    }
+    // Assert: triangulate — no over-blocking when unlocked
+    for (const id of ['fileInput', 'pasteToggle', 'parsePaste', 'sampleBtn', 'clearSongs', 'resetAll']) {
+      assert.equal(doc._els[id].disabled, false, id + ' enabled when unlocked');
+    }
+    assert.equal(doc._els.unlockBtn.disabled, true, 'unlockBtn stands down when unlocked');
+  });
+
+  it('unlocked edit applies title + artist and re-renders (triangulate happy path)', () => {
+    // Arrange: unlocked regime (beforeEach locks; stand down here)
+    core.state.locked = false;
+    // Act
+    const ret = app.handleEditRequest('r-s1', (function () {
+      const answers = ['Matador (remaster)', 'Los Fabulosos Cadillacs'];
+      return function () { return answers.shift(); };
+    })());
+    // Assert
+    assert.equal(ret.ok, true);
+    const song = core.state.songs.find((s) => s.id === 'r-s1');
+    assert.equal(song.title, 'Matador (remaster)');
+    assert.equal(song.artist, 'Los Fabulosos Cadillacs');
+  });
+});
+
 describe('regression: locked+empty snapshot boots with banner so discard escape is reachable', () => {
   let core;
   let draw;

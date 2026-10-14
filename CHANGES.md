@@ -311,7 +311,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-11] `session-lock-guards-offline-drill`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-11-session-lock-guards-offline-drill/`, spec `openspec/specs/session-lock/spec.md` nueva con 5 requirements + `openspec/specs/history-export/spec.md` writer, tests 214/214 green — session-lock-unlock 21/21, validate clean; drill offline 4.1–4.6 firmado por usuario 2026-10-14 "todo funciono como dice el drill") — **v1 show-ready**
 - **Scope**: OBLIGATORIO v1 — bloqueo de lista + salvaguardas + ruta offline verificada en multi-archivo (US-011, US-013; RN-SES-01/02, RN-X-01/04; IN-01; constraint 4)
   - Bloqueo: una vez `locked=true` (C-07), importar/vaciar/editar lista queda deshabilitado en UI. Desbloqueo solo vía acción administrativa explícita ("Desbloqueo administrativo") con **motivo obligatorio + doble `confirm()`**, registrada como entrada auditable en historial (visible y exportada en C-10) y persistida (C-06).
   - `Vaciar lista` / `Reiniciar partida` con `confirm()` simple, doble con historial, reseteo de `locked=false` solo vía la vía administrativa anterior; timeout de giro + buffer de reveal (C-03/C-08) cancelados.
