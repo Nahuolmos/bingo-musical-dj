@@ -692,6 +692,10 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
     draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
+    // Lock-regime seam (fix 2026-10-14, c-09): commit locks; locked clear is
+    // refused (see tests/session-lock-recovery.test.js) — unlock here to keep
+    // exercising the ghost-cancel wiring in the unlocked regime.
+    core.state.locked = false;
     let operatorReveals = 0;
     draw.scheduleReveal(() => { operatorReveals++; });
     // Act
@@ -713,6 +717,8 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     draw.finishCommit();
+    // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
+    core.state.locked = false;
     let publicReveals = 0;
     app.schedulePublicReveal(() => { publicReveals++; });
     assert.equal(app.isPublicBuffer(), true);
@@ -734,6 +740,8 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
     draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
+    // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
+    core.state.locked = false;
     let operatorReveals = 0;
     draw.scheduleReveal(() => { operatorReveals++; });
     // Act
@@ -756,6 +764,8 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
     draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
+    // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
+    core.state.locked = false;
     let operatorReveals = 0;
     let publicReveals = 0;
     draw.scheduleReveal(() => { operatorReveals++; });

@@ -8,6 +8,8 @@
 </head>
 <body>
 <div class="wrap">
+<!-- C-06 mirror: hidden restoreBanner node so the RN-X-03 DOM assert runs against parity markup (cf. index.html) -->
+<div id="restoreBanner" class="notice hidden" role="status" aria-live="polite" style="display:none"><span id="restoreBannerText"></span></div>
 <header class="top"><div class="brand"><div class="logo">ON</div><div><div class="eyebrow">MUSIC BINGO DJ</div><h1>Harness portable — tests.html</h1><p> espejo de <code>tests/*.test.js</code> para doble-click sin Node</p></div></div></header>
 <section class="panel"><h2>Resultados por módulo</h2><div id="results"><p class="muted">Ejecutando…</p></div></section>
 <section class="panel section"><h2>Cómo verificar</h2><p class="muted small">1) Doble-click <code>tests.html</code> vía <code>file://</code> en Chrome/Edge. 2) Todos los módulos deben mostrar PASS. 3) Sin errores en consola. Equivalente Node: <code>node --test tests/core.test.js tests/core.session.test.js tests/core.transitions.test.js tests/core.history.test.js tests/core.views.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js tests/transport.test.js</code></p></div></section>

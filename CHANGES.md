@@ -270,7 +270,8 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-09] `confirm-void-reason`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-09-confirm-void-reason/`, spec `openspec/specs/confirm-void/spec.md` con 6 requirements, tests 169/169 green — confirm-void 20/20 + session-lock-recovery 8/8, validate clean)
+- **Seguimiento pre-show**: smoke manual `file://` en navegador real pendiente (confirmar→played, anular con/sin motivo, motivo tras refresh, copiar título); contratos cubiertos por tests. Hacerlo en el drill de C-11, no bloquea.
 - **Scope**: Confirmación played / anulación con motivo persistido, terminal y sin reingreso (US-007; RN-HIS-02/03; RN-SOR-06; IN-02)
   - Solo habilitado con `current` en `drawn` y sin giro ni buffer de C-08 pendiente; `Marcar reproducida` → `setCurrentStatus('played')` vía `findLast`, limpia `current`.
   - `Anular por incidencia` → `prompt()` de **motivo obligatorio** (no vacío) + confirmación; `motivo` persistido en `HistoryEntry` (vía C-06) y visible en lista/historial ("Anulada — {motivo}"); `void` terminal, mensaje "Informá al organizador".

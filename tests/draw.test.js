@@ -210,6 +210,10 @@ describe('c-03 2.1: cancellable reveal timeout (RED)', () => {
       core.state.current = null;
       core.state.spinning = false;
       draw.pickAndCommit(0);
+      // Lock-regime seam (fix 2026-10-14, c-09): commit locks the catalog, and
+      // locked clear/reset are refused — so exercise the ghost-cancel wiring
+      // in the unlocked regime explicitly.
+      core.state.locked = false;
       let fired = 0;
       draw.scheduleReveal(() => { fired++; });
       app.handleClearSongs();
@@ -238,6 +242,8 @@ describe('c-03 2.1: cancellable reveal timeout (RED)', () => {
       core.state.current = null;
       core.state.spinning = false;
       draw.pickAndCommit(0);
+      // Lock-regime seam (fix 2026-10-14, c-09): see clearSongs test above.
+      core.state.locked = false;
       let fired = 0;
       draw.scheduleReveal(() => { fired++; });
       app.handleResetAll();

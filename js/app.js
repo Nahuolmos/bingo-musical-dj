@@ -127,7 +127,11 @@
       c.state.locked = s.locked === true;
       if (typeof s.startedAt === 'string' && s.startedAt) c.state.startedAt = s.startedAt;
       c.state.spinning = false;
-      if (!c.state.songs.length && !c.state.history.length) return { status: 'empty', banner: null };
+      // Locked-but-empty is still a session: the operator must see the banner
+      // (+ "Descartar y empezar de cero" escape) instead of a silent fresh
+      // boot, otherwise a cleared-while-locked snapshot bricks imports with
+      // no visible recovery until the C-11 admin unlock exists.
+      if (!c.state.songs.length && !c.state.history.length && s.locked !== true) return { status: 'empty', banner: null };
       return { status: 'restored', banner: formatRecoveryBanner(s.savedAt), savedAt: s.savedAt };
     }
     if (res.reason === 'unavailable') return { status: 'no-storage', banner: NO_STORAGE_MESSAGE };
@@ -517,7 +521,7 @@
     if (el) el.textContent = msg;
   }
 
-  // Single guard shared by paste/demo/file handlers (design risk mitigation).
+  // Single guard shared by paste/demo/file/clear/reset handlers (design risk mitigation).
   function guardedImport(items, label) {
     if (isImportBlocked()) {
       setImportMessage(BLOCKED_MESSAGE);
@@ -605,8 +609,15 @@
   // C-03 draw-engine: named clear/reset handlers (test seams in Node).
   // Confirms run first (synchronous modal: no timer can interleave), then the
   // in-flight reveal is cancelled so no ghost result resurrects cleared state.
+  // RN-SES-01 / rule 7: while locked, clear/reset are BLOCKED like imports
+  // (mid-partida list is immutable; unlock is the C-11 admin path). Refusal is
+  // total: no confirm modal, no timer cancel, no state mutation.
   function handleClearSongs() {
     var d = drawm();
+    if (isImportBlocked()) {
+      setImportMessage(BLOCKED_MESSAGE);
+      return false;
+    }
     if (typeof document === 'undefined') {
       d.cancelReveal();
       cancelPublicReveal();
@@ -640,6 +651,10 @@
 
   function handleResetAll() {
     var d = drawm();
+    if (isImportBlocked()) {
+      setImportMessage(BLOCKED_MESSAGE);
+      return false;
+    }
     if (typeof document === 'undefined') {
       d.cancelReveal();
       cancelPublicReveal();

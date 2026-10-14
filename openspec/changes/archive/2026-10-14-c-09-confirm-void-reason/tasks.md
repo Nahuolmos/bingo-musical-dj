@@ -20,6 +20,12 @@
 - [x] 3.3 Copy title–artist leaves draw state untouched — clipboard-mock + `prompt`-fallback tests asserting `title — artist` format (title-only when artist empty) with song/history/`current` unchanged; verify with `node --test tests/confirm-void.test.js`
 - [x] 3.4 Mirror + checklist + full suite green — add C-09 mirror block to `tests.html`, add confirmar/anular offline item to `docs/PRE_SHOW_CHECKLIST.md`, run full `node --test` suite with zero regressions; verify with `node --test tests/` output pasted in the apply note
 
+## 4. Fix import-dead regression (locked+empty brick, 2026-10-14)
+
+- [x] 4.1 Locked clear/reset refused with zero mutation — `handleClearSongs`/`handleResetAll` return `false` + `BLOCKED_MESSAGE` (verbatim, no `confirm()` modal) while `locked=true`, in both Node and DOM paths (RN-SES-01 / rule 7: importar/vaciar bloqueado); verify with `node --test tests/session-lock-recovery.test.js`
+- [x] 4.2 Locked+empty snapshot boots with banner — `bootRestore` reports `restored` (not `empty`) when persisted `locked=true` even with no songs/history, so "Descartar y empezar de cero" stays reachable as the pre-C-11 escape; unlocked-empty still boots `empty`; verify with `node --test tests/session-lock-recovery.test.js`
+- [x] 4.3 Recovery triangulated + suite green — discard escape re-enables demo AND paste imports (12+1 songs); 6 pre-existing ghost-cancel tests (c-03 2.1, c-08 3.3) re-seated to the unlocked regime via explicit `locked=false` seam (wipe-path wiring unchanged); full suite 169/169 green (161 baseline + 8 new); `tests.html` untouched (no mirrored contract changed, zero drift)
+
 ## Workflow follow-up
 
 - Apply requires explicit human approval before any code edit (CRITICO governance, audit-adjacent) — do not start implementation from this planning session.
