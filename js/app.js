@@ -303,18 +303,39 @@
       : st.current && st.current.status === 'drawn' ? 'Canción sorteada: buscala en VirtualDJ'
       : 'Listo para el próximo sorteo';
     var filtered = filterSongs(st.songs, $('filterInput').value);
+    // C-09: motivo lives on the history entry (audit record); the song row
+    // keeps status only. The list resolves the display motivo from the last
+    // matching entry (escaped via esc — free text, no markup surface).
+    function motivoForSong(songId) {
+      var found = '';
+      for (var mi = 0; mi < st.history.length; mi++) {
+        if (st.history[mi].id === songId && typeof st.history[mi].motivo === 'string' && st.history[mi].motivo) {
+          found = st.history[mi].motivo;
+        }
+      }
+      return found;
+    }
     $('songList').innerHTML = filtered.length ? filtered.map(function (s, i) {
-      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + (s.status === 'played' ? 'Reproducida' : s.status === 'void' ? 'Anulada' : s.status === 'drawn' ? 'Sorteada' : 'Disponible') + '</span></div>';
+      var pill = (s.status === 'played' ? 'Reproducida' : s.status === 'void' ? 'Anulada' : s.status === 'drawn' ? 'Sorteada' : 'Disponible');
+      if (s.status === 'void') {
+        var mv = motivoForSong(s.id);
+        if (mv) pill = 'Anulada — ' + c.esc(mv);
+      }
+      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + pill + '</span></div>';
     }).join('') : '<div class="empty">No hay coincidencias.</div>';
     $('historyCount').textContent = st.history.length + ' registro' + (st.history.length === 1 ? '' : 's');
     $('historyList').innerHTML = st.history.length ? [].concat(st.history).reverse().map(function (h) {
-      return '<div class="historyitem"><div class="historynum">' + String(h.n).padStart(2, '0') + '</div><div style="flex:1"><b>' + c.esc(h.title) + '</b><span>' + c.esc(h.artist || 'Artista no especificado') + ' · ' + c.esc(h.time) + '</span><span>' + (h.status === 'played' ? '✓ Reproducida' : h.status === 'void' ? '! Anulada por incidencia' : '● Sorteada') + '</span></div></div>';
+      var stateCopy = (h.status === 'played' ? '✓ Reproducida' : h.status === 'void' ? '! Anulada por incidencia' : '● Sorteada');
+      if (h.status === 'void' && typeof h.motivo === 'string' && h.motivo) stateCopy += ' — ' + c.esc(h.motivo);
+      return '<div class="historyitem"><div class="historynum">' + String(h.n).padStart(2, '0') + '</div><div style="flex:1"><b>' + c.esc(h.title) + '</b><span>' + c.esc(h.artist || 'Artista no especificado') + ' · ' + c.esc(h.time) + '</span><span>' + stateCopy + '</span></div></div>';
     }).join('') : '<div class="empty">Todavía no hubo sorteos.</div>';
     broadcast();
     try { persistCurrentState(); } catch (e) {}
   }
 
-  function setCurrentStatus(status) {
+  // C-09 confirm-void: single confirm path. Played passes no motivo; void
+  // passes the trimmed reason stored on the history entry (audit record).
+  function setCurrentStatus(status, motivo) {
     var c = core();
     var st = c.state;
     // C-03 draw-engine spinning guard + C-08 public-buffer guard: confirm
@@ -326,7 +347,10 @@
     var h = null;
     if (st.history.findLast) h = st.history.findLast(function (x) { return x.id === st.current.id; });
     else h = [].concat(st.history).reverse().find(function (x) { return x.id === st.current.id; });
-    if (h) h.status = status;
+    if (h) {
+      h.status = status;
+      if (status === 'void' && typeof motivo === 'string' && motivo) h.motivo = motivo;
+    }
     if (typeof document !== 'undefined') {
       var $ = function (id) { return document.getElementById(id); };
       if (status === 'played') {
@@ -345,6 +369,64 @@
     }
     st.current = null;
     if (typeof document !== 'undefined') render();
+  }
+
+  // C-09 confirm-void: injectable void seam (prompt/confirm are boundaries —
+  // tests pass mocks, the click handler passes the real modals). Gate order:
+  // current/drawn → spinning/buffer → prompt → empty-check → confirm.
+  // Returns true only when the void commits; false leaves state untouched.
+  function handleVoidRequest(promptFn, confirmFn) {
+    var c = core();
+    var st = c.state;
+    if (!st.current || st.current.status !== 'drawn') return false;
+    if (st.spinning || isPublicBuffer()) return false;
+    var pf = (typeof promptFn === 'function') ? promptFn
+      : (typeof prompt !== 'undefined' ? function (m) { return prompt(m); } : null);
+    if (!pf) return false;
+    var raw = pf('Motivo de la anulación (obligatorio):');
+    if (raw == null) return false;
+    var motivo = String(raw).trim();
+    if (!motivo) return false;
+    var cf = (typeof confirmFn === 'function') ? confirmFn
+      : (typeof confirm !== 'undefined' ? function (m) { return confirm(m); } : null);
+    if (!cf) return false;
+    if (!cf('¿Registrar esta canción como anulada por una incidencia real? Quedará excluida del sorteo.')) return false;
+    setCurrentStatus('void', motivo);
+    return true;
+  }
+
+  // C-09 confirm-void: copy seam for manual VirtualDJ cue (clipboard +
+  // legacy prompt fallback). Pure boundary: tests inject mocks, the click
+  // handler injects the real clipboard/prompt. Never mutates draw state.
+  function formatCopyText(song) {
+    if (!song) return null;
+    return song.title + (song.artist ? ' — ' + song.artist : '');
+  }
+
+  function handleCopyRequest(clipboardWriteFn, promptFn) {
+    var c = core();
+    if (!c.state.current) return null;
+    var text = formatCopyText(c.state.current);
+    if (typeof clipboardWriteFn === 'function') {
+      try {
+        clipboardWriteFn(text);
+      } catch (e) {
+        var pf1 = (typeof promptFn === 'function') ? promptFn
+          : (typeof prompt !== 'undefined' ? function (m, preset) { return prompt(m, preset); } : null);
+        if (pf1) { try { pf1('Copiá el resultado:', text); } catch (e2) {} }
+      }
+      return text;
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text);
+        return text;
+      }
+    } catch (e) {}
+    var pf = (typeof promptFn === 'function') ? promptFn
+      : (typeof prompt !== 'undefined' ? function (m, preset) { return prompt(m, preset); } : null);
+    if (pf) { try { pf('Copiá el resultado:', text); } catch (e2) {} }
+    return text;
   }
 
   // Secure draw UI flow: commit via draw.pickAndCommit() BEFORE animation.
@@ -627,20 +709,25 @@
     $('drawBtn').addEventListener('click', handleDrawClick);
     $('confirmBtn').addEventListener('click', function () { setCurrentStatus('played'); });
     $('skipResult').addEventListener('click', function () {
-      if (confirm('¿Registrar esta canción como anulada por una incidencia real? Quedará excluida del sorteo.')) setCurrentStatus('void');
+      handleVoidRequest();
     });
     $('copyResult').addEventListener('click', function () {
       var c = core();
       if (!c.state.current) return;
-      var cur = c.state.current;
-      try {
-        navigator.clipboard.writeText(cur.title + (cur.artist ? ' — ' + cur.artist : '')).then(function () {
-          $('copyResult').textContent = 'Copiado ✓';
-          setTimeout(function () { $('copyResult').textContent = 'Copiar título y artista'; }, 1500);
-        });
-      } catch (e) {
-        prompt('Copiá el resultado:', cur.title + (cur.artist ? ' — ' + cur.artist : ''));
-      }
+      var text = formatCopyText(c.state.current);
+      handleCopyRequest(function (t) {
+        try {
+          var r = navigator.clipboard.writeText(t);
+          if (r && typeof r.then === 'function') {
+            r.then(function () {
+              $('copyResult').textContent = 'Copiado ✓';
+              setTimeout(function () { $('copyResult').textContent = 'Copiar título y artista'; }, 1500);
+            });
+          }
+        } catch (e) {
+          prompt('Copiá el resultado:', t);
+        }
+      }, function (m, preset) { return prompt(m, preset); });
     });
     $('pasteToggle').addEventListener('click', function () { $('pasteArea').classList.toggle('hidden'); });
     $('cancelPaste').addEventListener('click', function () { $('pasteArea').classList.add('hidden'); });
@@ -735,6 +822,9 @@
     buildStateMessage: buildStateMessage,
     writeTransport: writeTransport,
     setCurrentStatus: setCurrentStatus,
+    handleVoidRequest: handleVoidRequest,
+    formatCopyText: formatCopyText,
+    handleCopyRequest: handleCopyRequest,
     handleDrawClick: handleDrawClick,
     handleClearSongs: handleClearSongs,
     handleResetAll: handleResetAll,

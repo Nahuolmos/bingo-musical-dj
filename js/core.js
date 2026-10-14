@@ -91,7 +91,8 @@
   }
 
   // c-02: in-place history update (findLast with index-loop fallback).
-  function setHistoryStatus(history, songId, next) {
+  // c-09: optional trimmed motivo stored on the voided entry (audit record).
+  function setHistoryStatus(history, songId, next, motivo) {
     if (!Array.isArray(history)) return false;
     var h = null;
     if (history.findLast) h = history.findLast(function (x) { return x.id === songId; });
@@ -102,6 +103,7 @@
     }
     if (!h) return false;
     h.status = next;
+    if (typeof motivo === 'string' && motivo) h.motivo = motivo;
     return true;
   }
 

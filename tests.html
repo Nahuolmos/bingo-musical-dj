@@ -162,6 +162,20 @@
     assert(/^s[0-9a-z]+$/.test(MBDJ.core.makeId()), 'makeId shape');
     assert(/^\d{2}:\d{2}:\d{2}$/.test(MBDJ.core.formatTime(new Date())), 'hora HH:MM:SS');
   });
+  check('confirm-void (c-09: played/void con motivo + gates + copia)', function () {
+    assert(typeof MBDJ.app.setCurrentStatus === 'function', 'setCurrentStatus');
+    assert(typeof MBDJ.app.handleVoidRequest === 'function', 'handleVoidRequest');
+    assert(typeof MBDJ.app.formatCopyText === 'function', 'formatCopyText');
+    assert(typeof MBDJ.app.handleCopyRequest === 'function', 'handleCopyRequest');
+    assert(MBDJ.app.formatCopyText({ title: 'Matador', artist: 'Los Fabulosos Cadillacs' }) === 'Matador — Los Fabulosos Cadillacs', 'copy mirror');
+    assert(MBDJ.app.formatCopyText({ title: 'Solo Tema', artist: '' }) === 'Solo Tema', 'copy title-only mirror');
+    assert(MBDJ.app.formatCopyText(null) === null, 'copy no-current mirror');
+    var h = [{ n: 1, id: 'a', title: 'T', artist: 'A', status: 'drawn', time: '12:00:01', motivo: '' }];
+    assert(MBDJ.core.setHistoryStatus(h, 'a', 'void', 'Falta el archivo') === true, 'motivo seam');
+    assert(h[0].status === 'void' && h[0].motivo === 'Falta el archivo', 'motivo mirror');
+    assert(MBDJ.core.isValidTransition('void', 'available') === false, 'void terminal mirror');
+    assert(MBDJ.core.esc('<scr' + 'ipt>') === '&lt;scr' + 'ipt&gt;', 'esc mirror');
+  });
   check('sin document.write en ruta principal', function () {
     var scripts = Array.prototype.slice.call(document.scripts).map(function (s) { return s.src; }).join(' ');
     assert(scripts.indexOf('js/core.js') !== -1, 'orden core presente');

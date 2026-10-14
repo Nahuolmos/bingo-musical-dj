@@ -11,6 +11,7 @@ Todo ejecutable por doble-click, sin red (salvo PDF/DOCX que avisa fallback).
 - [ ] 5. Offline drill: desconectar red → importar `assets/lista-ejemplo.csv` → 12 canciones, mensaje con duplicados (no silencioso). Sortear 1 → rueda gira, resultado comprometido antes de animación.
 - [ ] 6. VDJ manual + audio: resultado sorteado → buscar/cargar manual en VirtualDJ (el panel NO controla VDJ en v1) → probar audio y archivos musicales.
 - [ ] 6b. Re-sync post-recarga (C-06 + C-08): con la pública abierta, recargar el panel → banner `Partida recuperada…` → reabrir/actualizar la pública → muestra el estado vigente (sin títulos fantasma de sorteos anulados por vaciar/reiniciar a mitad de giro o buffer).
+- [ ] 6c. Confirmar/anular offline (C-09): tras 1 sorteo revelado → `✓ Marcar reproducida` cierra en `played`; sortear otra → `Anular por incidencia` exige motivo (vacío/cancelar aborta sin mutar) → lista muestra `Anulada — {motivo}`, historial con motivo, excluida del pool; `Copiar título y artista` no muta estado. Recargar → motivo sobrevive (banner `Partida recuperada…`).
 - [ ] 7. Pre-export: click `Exportar historial` → CSV con BOM abre en Excel; columnas N°/Título/Artista/Estado/Hora.
 - [ ] 8. Reintento file://: si algo falla, comparar con `index.monolith.html` (referencia) y reportar; fallback solo si hace falta: `npx serve .`.
 
