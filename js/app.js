@@ -329,8 +329,12 @@
     }).join('') : '<div class="empty">No hay coincidencias.</div>';
     $('historyCount').textContent = st.history.length + ' registro' + (st.history.length === 1 ? '' : 's');
     $('historyList').innerHTML = st.history.length ? [].concat(st.history).reverse().map(function (h) {
-      var stateCopy = (h.status === 'played' ? '✓ Reproducida' : h.status === 'void' ? '! Anulada por incidencia' : '● Sorteada');
+      // C-10 unlock reservation: song-less admin entries (future C-11) render
+      // their own status visibly — never mislabeled Sorteada, never crashing
+      // on ids with no song row. Drawn/played/void copies stay frozen (C-09).
+      var stateCopy = (h.status === 'played' ? '✓ Reproducida' : h.status === 'void' ? '! Anulada por incidencia' : h.status === 'drawn' ? '● Sorteada' : '○ ' + c.esc(h.status == null ? '' : h.status));
       if (h.status === 'void' && typeof h.motivo === 'string' && h.motivo) stateCopy += ' — ' + c.esc(h.motivo);
+      else if (h.status !== 'played' && h.status !== 'drawn' && typeof h.motivo === 'string' && h.motivo) stateCopy += ' — ' + c.esc(h.motivo);
       return '<div class="historyitem"><div class="historynum">' + String(h.n).padStart(2, '0') + '</div><div style="flex:1"><b>' + c.esc(h.title) + '</b><span>' + c.esc(h.artist || 'Artista no especificado') + ' · ' + c.esc(h.time) + '</span><span>' + stateCopy + '</span></div></div>';
     }).join('') : '<div class="empty">Todavía no hubo sorteos.</div>';
     broadcast();
@@ -558,13 +562,36 @@
     return artist || 'Artista no especificado';
   }
 
+  // C-10 history-export: pure anti-injection helper. Prefixes a single
+  // quote when the RAW cell starts with = + - @ so spreadsheet apps treat
+  // it as text (visible content preserved). Applied BEFORE RFC quoting —
+  // order matters (design decision 2). null/undefined -> ''.
+  function sanitizeCsvCell(v) {
+    var s = String(v == null ? '' : v);
+    if (/^[=+\-@]/.test(s)) return "'" + s;
+    return s;
+  }
+
+  // C-10 history-export: 6-column Excel-compatible CSV (trailing Motivo,
+  // additive — old 5-col files still parse). BOM + CRLF + RFC-4180 quoting
+  // preserved; old mbdj.v1 entries without motivo default to '' (no migration).
   function buildCsv(history) {
-    var rows = [['N°', 'Título', 'Artista', 'Estado', 'Hora']];
-    history.forEach(function (h) { rows.push([h.n, h.title, h.artist, h.status, h.time]); });
+    var rows = [['Nº', 'Título', 'Artista', 'Estado', 'Hora', 'Motivo']];
+    (Array.isArray(history) ? history : []).forEach(function (h) {
+      rows.push([h.n, h.title, h.artist, h.status, h.time, (h.motivo == null ? '' : h.motivo)]);
+    });
     var csv = rows.map(function (r) {
-      return r.map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(',');
+      return r.map(function (v) { return '"' + String(sanitizeCsvCell(v)).replace(/"/g, '""') + '"'; }).join(',');
     }).join('\r\n');
     return '﻿' + csv;
+  }
+
+  // C-10 history-export: empty export is header-only AND announced — never
+  // silent. Pure seam (tests assert the copy); the click handler below
+  // surfaces it on the existing importMessage surface.
+  function historyExportNotice(history) {
+    if (!history || !history.length) return 'Historial vacío — se exportó solo el encabezado.';
+    return '';
   }
 
   function download(blob, name) {
@@ -759,6 +786,9 @@
       var c = core();
       download(new Blob([buildCsv(c.state.history)], { type: 'text/csv;charset=utf-8' }), 'music-bingo-historial.csv');
       try { markExported(); } catch (e) {}
+      // C-10: empty export announces itself instead of downloading silently.
+      var notice = historyExportNotice(c.state.history);
+      if (notice) setImportMessage(notice);
     });
     $('openPublic').addEventListener('click', openPublic);
     $('fileInput').addEventListener('change', function (e) {
@@ -845,6 +875,8 @@
     handleResetAll: handleResetAll,
     buildDemoSongs: buildDemoSongs,
     buildCsv: buildCsv,
+    sanitizeCsvCell: sanitizeCsvCell,
+    historyExportNotice: historyExportNotice,
     BLOCKED_MESSAGE: BLOCKED_MESSAGE,
     isImportBlocked: isImportBlocked,
     guardedImport: guardedImport,

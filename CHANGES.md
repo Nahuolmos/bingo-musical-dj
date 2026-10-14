@@ -293,7 +293,8 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 > C-11 cierra v1: bloqueo administrativo auditado (constraint 4) + drill offline con la nueva arquitectura.
 
 ### [C-10] `history-export-audit`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-10-history-export-audit/`, spec `openspec/specs/history-export/spec.md` con 8 requirements, tests 193/193 green — history-export 24/24, validate clean; aprobación explícita 2026-10-14)
+- **Seguimiento pre-show**: smoke manual `file://` + Excel en navegador real pendiente (demo→sortear→confirmar/anular con motivo→exportar→BOM/columnas/motivo→reset export-first; tarea 4.3); contratos cubiertos por tests. Hacerlo en el drill de C-11, no bloquea.
 - **Scope**: Historial auditable + exportación CSV válida en Excel, incluyendo motivo y desbloqueos (US-009, US-010; RN-HIS-01…04)
   - Historial orden `n`, hora `es-AR HH:MM:SS`, estado in-place `Sorteada/Reproducida/Anulada` (+ motivo de C-09); desbloqueos administrativos de C-11 y correcciones/ausencias también quedan como entradas auditables con estado visible.
   - Exportar `music-bingo-historial.csv`: columnas `Nº,Título,Artista,Estado,Hora` (+ `Motivo`), comillas RFC + BOM `\ufeff`, sanitización anti-inyección (`=+-@`), vacío → solo encabezado. Incluye entradas de reveal retardado sin duplicar (una fila por sorteo).

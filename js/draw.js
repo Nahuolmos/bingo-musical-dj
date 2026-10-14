@@ -55,13 +55,17 @@
     var s = pool[idx];
     s.status = 'drawn';
     st.current = s;
+    // C-10 history-export: canonical es-AR HH:MM:SS via core.formatTime
+    // (hour12:false). The previous inline toLocaleTimeString defaulted to a
+    // 12-hour clock ("02:04:34 a. m.") and broke the ^\d{2}:\d{2}:\d{2}$
+    // audit contract that core.createHistoryEntry already keeps.
     st.history.push({
       n: st.history.length + 1,
       id: s.id,
       title: s.title,
       artist: s.artist,
       status: 'drawn',
-      time: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      time: core.formatTime(new Date())
     });
     // C-07 draw-no-repeat: first committed draw freezes the catalog.
     // Idempotent — stays true for later draws; persisted via C-06 autosave

@@ -12,7 +12,8 @@ Todo ejecutable por doble-click, sin red (salvo PDF/DOCX que avisa fallback).
 - [ ] 6. VDJ manual + audio: resultado sorteado → buscar/cargar manual en VirtualDJ (el panel NO controla VDJ en v1) → probar audio y archivos musicales.
 - [ ] 6b. Re-sync post-recarga (C-06 + C-08): con la pública abierta, recargar el panel → banner `Partida recuperada…` → reabrir/actualizar la pública → muestra el estado vigente (sin títulos fantasma de sorteos anulados por vaciar/reiniciar a mitad de giro o buffer).
 - [ ] 6c. Confirmar/anular offline (C-09): tras 1 sorteo revelado → `✓ Marcar reproducida` cierra en `played`; sortear otra → `Anular por incidencia` exige motivo (vacío/cancelar aborta sin mutar) → lista muestra `Anulada — {motivo}`, historial con motivo, excluida del pool; `Copiar título y artista` no muta estado. Recargar → motivo sobrevive (banner `Partida recuperada…`).
-- [ ] 7. Pre-export: click `Exportar historial` → CSV con BOM abre en Excel; columnas N°/Título/Artista/Estado/Hora.
+- [ ] 7. Pre-export: click `Exportar historial` → CSV con BOM abre en Excel; columnas Nº/Título/Artista/Estado/Hora/Motivo (celdas que empiezan con `=+-@` se exportan como texto con prefijo `'`).
+- [ ] 7b. Fin día 1 (evento 2 días, C-10): click `Exportar historial` → guardar `music-bingo-historial.csv` como evidencia del día 1 (incluye motivos de anulación) antes de apagar; el día 2 continúa sobre la misma partida y se exporta de nuevo al cierre.
 - [ ] 8. Reintento file://: si algo falla, comparar con `index.monolith.html` (referencia) y reportar; fallback solo si hace falta: `npx serve .`.
 
 Firmado: __________ Fecha: __________ Navegadores probados: __________
