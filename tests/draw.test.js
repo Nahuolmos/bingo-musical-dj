@@ -334,3 +334,291 @@ describe('c-03 2.3: spinning guard blocks draw and confirm', () => {
     assert.ok(/scheduleReveal\(/.test(appCode), 'reveal goes through scheduleReveal');
   });
 }); // end c-03 2.3
+
+// ---- c-07 helpers (fresh-state reset + in-memory storage seam) ----
+function c07Reset(core, songs) {
+  core.state.songs = songs;
+  core.state.history = [];
+  core.state.current = null;
+  core.state.spinning = false;
+  core.state.locked = false;
+}
+
+function c07MemStorage() {
+  var m = {};
+  return {
+    setItem: function (k, v) { m[k] = String(v); },
+    getItem: function (k) { return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+    removeItem: function (k) { delete m[k]; }
+  };
+}
+
+function c07TwelveSongs() {
+  var out = [];
+  for (var i = 1; i <= 12; i++) {
+    var n = String(i).padStart(2, '0');
+    out.push({ id: 'c07-s' + n, title: 'Tema ' + n, artist: 'Artista ' + n, status: 'available' });
+  }
+  return out;
+}
+
+describe('c-07 1.1: draw without replacement over full catalog (N=12, secure path)', () => {
+  it('12 secure draws give 12 unique ids, available() empty, history n=1..12 monotonic', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, c07TwelveSongs());
+    try {
+      const seen = new Set();
+      for (let k = 0; k < 12; k++) {
+        const picked = draw.pickAndCommit();
+        assert.ok(picked, 'draw ' + (k + 1) + ' picks a song');
+        seen.add(picked.id);
+        draw.finishCommit();
+      }
+      assert.equal(seen.size, 12, 'no id appears twice');
+      assert.equal(core.available().length, 0, 'pool exhausted');
+      assert.equal(core.state.history.length, 12);
+      for (let i = 0; i < 12; i++) assert.equal(core.state.history[i].n, i + 1, 'monotonic n at ' + i);
+      for (const h of core.state.history) assert.equal(h.status, 'drawn');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('drawn song leaves the eligible pool for later draws', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, [
+      { id: 'c07-a1', title: 'Alfa', artist: 'A1', status: 'available' },
+      { id: 'c07-b2', title: 'Beta', artist: 'B2', status: 'available' },
+      { id: 'c07-c3', title: 'Gamma', artist: 'C3', status: 'available' },
+    ]);
+    try {
+      const first = draw.pickAndCommit(0);
+      assert.ok(first);
+      const firstId = first.id;
+      draw.finishCommit();
+      const poolIds = core.available().map((s) => s.id);
+      assert.ok(!poolIds.includes(firstId), 'committed song not eligible again');
+      assert.equal(poolIds.length, 2);
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+});
+
+describe('c-07 1.3: edges (0 -> null, 1 deterministic, exhausted copy)', () => {
+  it('0 eligible -> null with no history/current/locked mutation', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, []);
+    try {
+      assert.equal(draw.pickAndCommit(0), null);
+      assert.equal(draw.pickAndCommit(), null);
+      assert.equal(core.state.history.length, 0);
+      assert.equal(core.state.current, null);
+      assert.equal(core.state.locked, false);
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('1 eligible -> deterministic literal pick via secure path', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, [{ id: 'c07-only', title: 'Unica', artist: 'Solo', status: 'available' }]);
+    try {
+      const picked = draw.pickAndCommit();
+      assert.ok(picked);
+      assert.equal(picked.id, 'c07-only');
+      assert.equal(picked.title, 'Unica');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('exhausted catalog -> null + app.js disabled + No quedan canciones disponibles copy', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    const fs = require('node:fs');
+    const path = require('node:path');
+    c07Reset(core, [
+      { id: 'c07-e1', title: 'Euno', artist: 'EA', status: 'drawn' },
+      { id: 'c07-e2', title: 'Edos', artist: 'EB', status: 'played' },
+      { id: 'c07-e3', title: 'Etres', artist: 'EC', status: 'void' },
+    ]);
+    try {
+      assert.equal(core.available().length, 0);
+      assert.equal(draw.pickAndCommit(), null);
+      assert.equal(core.state.history.length, 0);
+      const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
+      assert.ok(appSrc.includes('No quedan canciones disponibles'), 'exhausted copy frozen');
+      assert.ok(appSrc.includes('Esperando listado de canciones'), 'empty copy branch kept');
+      assert.ok(/drawBtn.*disabled.*!av\.length \|\| .*spinning/.test(appSrc.replace(/\/\*[\s\S]*?\*\//g, '')), 'drawBtn disabled on empty/exhausted');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+});
+
+describe('c-07 2.1: first-draw lock activation + import-reject round-trip', () => {
+  it('first pickAndCommit sets locked=true and second draw keeps it true', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, [
+      { id: 'c07-l1', title: 'Lock Uno', artist: 'LA', status: 'available' },
+      { id: 'c07-l2', title: 'Lock Dos', artist: 'LB', status: 'available' },
+    ]);
+    try {
+      assert.equal(core.state.locked, false);
+      const first = draw.pickAndCommit(0);
+      assert.ok(first);
+      assert.equal(core.state.locked, true, 'lock activates on first commit');
+      draw.finishCommit();
+      const second = draw.pickAndCommit(0);
+      assert.ok(second);
+      assert.equal(core.state.locked, true, 'lock stays true');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('locked survives a simulated C-06 save/load round-trip', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    const store = require('../js/store.js');
+    c07Reset(core, [
+      { id: 'c07-p1', title: 'Pers Uno', artist: 'PA', status: 'available' },
+      { id: 'c07-p2', title: 'Pers Dos', artist: 'PB', status: 'available' },
+    ]);
+    const mem = c07MemStorage();
+    try {
+      draw.pickAndCommit(0);
+      assert.equal(core.state.locked, true);
+      const saved = store.save({
+        songs: core.state.songs,
+        history: core.state.history,
+        current: core.state.current,
+        locked: core.state.locked,
+        startedAt: core.state.startedAt
+      }, mem);
+      assert.equal(saved.ok, true);
+      const loaded = store.load(mem);
+      assert.equal(loaded.ok, true);
+      assert.equal(loaded.snapshot.locked, true, 'locked persists through autosave');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('draw -> import-reject round-trip through the real C-04 guard (verbatim + unchanged)', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    const app = require('../js/app.js');
+    c07Reset(core, [
+      { id: 'c07-r1', title: 'Round Uno', artist: 'RA', status: 'available' },
+      { id: 'c07-r2', title: 'Round Dos', artist: 'RB', status: 'available' },
+    ]);
+    try {
+      draw.pickAndCommit(0);
+      assert.equal(app.isImportBlocked(), true);
+      const before = core.state.songs.length;
+      const res = app.guardedImport([{ title: 'Intruso', artist: 'X', status: 'available' }], 'texto');
+      assert.equal(res.blocked, true);
+      assert.equal(res.added, 0);
+      assert.equal(res.duplicates, 0);
+      assert.equal(res.message, app.BLOCKED_MESSAGE);
+      assert.equal(res.message, 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.');
+      assert.equal(core.state.songs.length, before, 'catalog unchanged');
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+});
+
+describe('c-07 3.1: commit-before-reveal ordering (timer seam)', () => {
+  it('commit exists synchronously after pickAndCommit, before any scheduleReveal callback', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, [
+      { id: 'c07-t1', title: 'Tiempo Uno', artist: 'TA', status: 'available' },
+      { id: 'c07-t2', title: 'Tiempo Dos', artist: 'TB', status: 'available' },
+    ]);
+    const fake = makeFakeTimers();
+    draw.setTimerFns(fake);
+    try {
+      const picked = draw.pickAndCommit(0);
+      assert.ok(picked);
+      // Synchronous commit assertions BEFORE any reveal callback fires:
+      assert.equal(picked.status, 'drawn');
+      assert.ok(core.state.current, 'current set synchronously');
+      assert.equal(core.state.current.id, picked.id);
+      assert.equal(core.state.history.length, 1);
+      assert.equal(core.state.history[0].status, 'drawn');
+      assert.equal(core.state.history[0].id, picked.id);
+      let fired = 0;
+      draw.scheduleReveal(() => { fired++; });
+      assert.equal(fired, 0, 'reveal not yet fired');
+      assert.equal(draw.isRevealing(), true);
+      fake.fireAll();
+      assert.equal(fired, 1, 'reveal fires only via timer');
+    } finally {
+      draw.resetTimerFns();
+      draw.cancelReveal();
+      c07Reset(core, []);
+    }
+  });
+});
+
+describe('c-07 3.3: mid-spin UI lock', () => {
+  it('second pickAndCommit mid-spin -> null + unchanged state (incl. locked)', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    c07Reset(core, [
+      { id: 'c07-m1', title: 'Mid Uno', artist: 'MA', status: 'available' },
+      { id: 'c07-m2', title: 'Mid Dos', artist: 'MB', status: 'available' },
+    ]);
+    try {
+      const first = draw.pickAndCommit(0);
+      assert.ok(first);
+      const n = core.state.history.length;
+      const curId = core.state.current.id;
+      const lockedNow = core.state.locked;
+      assert.equal(draw.pickAndCommit(1), null);
+      assert.equal(draw.pickAndCommit(), null);
+      assert.equal(core.state.history.length, n);
+      assert.equal(core.state.current.id, curId);
+      assert.equal(core.state.locked, lockedNow);
+      assert.equal(core.state.spinning, true);
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+
+  it('setCurrentStatus blocked mid-spin; app.js keeps SORTEANDO texts + button disables + no-arg call site', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    const app = require('../js/app.js');
+    const fs = require('node:fs');
+    const path = require('node:path');
+    c07Reset(core, [{ id: 'c07-s1', title: 'Spin Uno', artist: 'SA', status: 'available' }]);
+    try {
+      draw.pickAndCommit(0);
+      app.setCurrentStatus('played');
+      assert.equal(core.state.current && core.state.current.status, 'drawn');
+      app.setCurrentStatus('void');
+      assert.equal(core.state.current && core.state.current.status, 'drawn');
+      const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
+      const code = appSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      assert.ok(appSrc.includes('SORTEANDO'), 'wheel SORTEANDO text kept');
+      assert.ok(appSrc.includes('La ruleta está girando'), 'heading explains result already chosen');
+      assert.ok(/drawBtn.*disabled\s*=\s*true/.test(code), 'drawBtn disabled mid-spin');
+      assert.ok(/confirmBtn.*disabled\s*=\s*true/.test(code), 'confirmBtn disabled mid-spin');
+      const calls = code.match(/pickAndCommit\(([^)]*)\)/g) || [];
+      assert.ok(calls.length >= 1);
+      for (const c of calls) assert.ok(/pickAndCommit\(\s*\)/.test(c), 'production call passes no argument: ' + c);
+    } finally {
+      c07Reset(core, []);
+    }
+  });
+}); // end c-07

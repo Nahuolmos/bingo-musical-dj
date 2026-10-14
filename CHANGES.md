@@ -234,7 +234,8 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 > C-08 y C-09 en paralelo tras C-07. C-08 implementa el retraso ~3 s (constraint 2, anti-spoiler + buffer VirtualDJ manual).
 
 ### [C-07] `draw-without-repetition`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-07-draw-without-repetition/`, spec `openspec/specs/draw-no-repeat/spec.md` con 6 requirements, tests 107/107 green — draw 30/30, validate clean)
+- **Seguimiento pre-show**: smoke manual `file://` en navegador real pendiente (demo→sortear→locked→import rejected→exhaust→refresh banner); contratos cubiertos por tests. Hacerlo en el drill de C-11, no bloquea.
 - **Scope**: Sorteo uniforme sin repetición con commit antes de animar + activa bloqueo (US-005; RN-SOR-01…05; RN-SES-01; DD-03)
   - Handler `Sortear` en `js/draw.js`: verifica `!spinning && available().length`; elige `s = pool[secureIndex(pool.length)]`; compromete `s.status='drawn'`, `current=s`, `history.push({n,status:'drawn',time})` **antes** de animar; **activa `Session.locked=true`** en el primer sorteo (persiste vía C-06).
   - Bordes: 0 elegibles → deshabilitado + "No quedan canciones disponibles"; 1 elegible → determinista; sorteada nunca vuelve a elegible.

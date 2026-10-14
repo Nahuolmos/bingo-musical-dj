@@ -63,6 +63,11 @@
       status: 'drawn',
       time: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     });
+    // C-07 draw-no-repeat: first committed draw freezes the catalog.
+    // Idempotent — stays true for later draws; persisted via C-06 autosave
+    // in render(). Set inside the commit (not app.js) so Node/test paths
+    // can't skip the lock. Before spinning=true, no DOM, no schemaVersion change.
+    st.locked = true;
     st.spinning = true;
     return s;
   }
