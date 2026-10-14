@@ -186,6 +186,19 @@
     var back = MBDJ.public.parseTransportValue(fake.getItem());
     assert(MBDJ.public.isStateMessage(back), 'round-trip DJ->publica');
   });
+  check('publica diferida 3 s (c-08: spinning sin titulo -> reveal tras buffer)', function () {
+    assert(MBDJ.app.REVEAL_DELAY_MS === 3000, 'delay nombrado 3000');
+    assert(MBDJ.draw.SPIN_MS === 2750, 'base de giro intacta');
+    assert(typeof MBDJ.app.isPublicBuffer === 'function', 'isPublicBuffer');
+    assert(typeof MBDJ.app.schedulePublicReveal === 'function', 'schedulePublicReveal');
+    assert(typeof MBDJ.app.cancelPublicReveal === 'function', 'cancelPublicReveal');
+    var m = MBDJ.app.buildStateMessage('spinning');
+    assert(m.phase === 'spinning' && m.current === null, 'spinning sin titulo');
+    var html2 = MBDJ.public.buildPublicHTML();
+    assert(html2.indexOf('Buscando el tema en cabina') !== -1, 'mensaje cabina en buffer');
+    assert(typeof MBDJ.public.requiresModernBrowser === 'function', 'requiresModernBrowser');
+    assert(MBDJ.public.requiresModernBrowser({}) === true, 'sin BC ni storage pide navegador actual');
+  });
   check('public.html inline parsea (nivel2: SyntaxError dejaba la publica en waiting+0)', function () {
     var html3 = MBDJ.public.buildPublicHTML();
     var code = html3.split('<scr' + 'ipt>')[1].split('</scr' + 'ipt>')[0];

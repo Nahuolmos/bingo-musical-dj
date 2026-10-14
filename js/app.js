@@ -155,15 +155,38 @@
     try { channel = new BroadcastChannel(PUBLIC_CHANNEL); } catch (e) { channel = null; }
   }
 
-  function buildStateMessage() {
+  function buildStateMessage(phase) {
     var c = core();
     var st = c.state;
     var av = c.available();
+    // C-08 public-screen: phased envelope. `spinning` withholds the committed
+    // title BY CONSTRUCTION (current:null on the wire) so the projector never
+    // spoils during the operator spin + 3 s VirtualDJ cue buffer. Any other
+    // phase (incl. legacy no-arg callers) carries current as before.
+    var ph = (typeof phase === 'string' && phase) ? phase : 'idle';
+    // C-08 spoiler closure: the committed title lives in three places
+    // (current, unconfirmed `drawn` history entries, song rows). The spinning
+    // envelope scrubs all three — counters stay numeric so the projector can
+    // still pin counter/last-5 without ever seeing the in-flight title.
+    var outSongs = st.songs;
+    var outHistory = st.history;
+    var outCurrent = null;
+    if (ph === 'spinning') {
+      outSongs = st.songs.map(function (s) {
+        if (s.status !== 'drawn') return s;
+        return { id: s.id, title: '', artist: '', status: s.status, addedAt: s.addedAt };
+      });
+      outHistory = st.history.filter(function (h) { return h.status !== 'drawn'; });
+    } else if (st.current) {
+      // C-08: id included so the projector can dedupe off (phase, current.id).
+      outCurrent = { id: st.current.id, title: st.current.title, artist: st.current.artist, status: st.current.status };
+    }
     return {
       type: 'state',
-      songs: st.songs,
-      history: st.history,
-      current: st.current ? { title: st.current.title, artist: st.current.artist, status: st.current.status } : null,
+      phase: ph,
+      songs: outSongs,
+      history: outHistory,
+      current: outCurrent,
       total: st.songs.length,
       remaining: av.length,
       drawn: st.songs.filter(function (s) { return s.status !== 'available'; }).length
@@ -197,8 +220,64 @@
     }
   }
 
-  function broadcast(storage) {
-    var msg = buildStateMessage();
+  // C-08 public-screen: named public reveal delay (ms), independent of the
+  // C-03 spin base (SPIN_MS=2750 in draw.js). NEVER merge one into the other:
+  // retuning here moves only the projector reveal, never commit nor spin.
+  var REVEAL_DELAY_MS = 3000;
+
+  // C-08 buffer timer owned by app.js (spin timer stays in draw.js), reusing
+  // the draw.js injectable-timer pattern so tests drive both deterministically.
+  var publicRevealTimer = null;
+  var publicTimerFns = null;
+
+  function setPublicTimerFns(fns) { publicTimerFns = fns || null; }
+  function resetPublicTimerFns() { publicTimerFns = null; }
+
+  function getPublicSetTimeout() {
+    if (publicTimerFns && typeof publicTimerFns.setTimeoutFn === 'function') return publicTimerFns.setTimeoutFn;
+    return function (cb, ms) { return setTimeout(cb, ms); };
+  }
+
+  function getPublicClearTimeout() {
+    if (publicTimerFns && typeof publicTimerFns.clearTimeoutFn === 'function') return publicTimerFns.clearTimeoutFn;
+    return function (id) { clearTimeout(id); };
+  }
+
+  function schedulePublicReveal(fn, delayMs) {
+    cancelPublicReveal();
+    var delay = (typeof delayMs === 'number') ? delayMs : REVEAL_DELAY_MS;
+    publicRevealTimer = getPublicSetTimeout()(function () {
+      publicRevealTimer = null; // null-before-invoke: a racing cancel stays a safe no-op
+      fn();
+    }, delay);
+    return publicRevealTimer;
+  }
+
+  // Idempotent; clears the buffer handle only — `spinning` resets via finishCommit.
+  function cancelPublicReveal() {
+    if (publicRevealTimer === null || publicRevealTimer === undefined) return false;
+    var id = publicRevealTimer;
+    publicRevealTimer = null;
+    try { getPublicClearTimeout()(id); } catch (e) { /* already fired: no-op */ }
+    return true;
+  }
+
+  function isPublicBuffer() { return publicRevealTimer !== null && publicRevealTimer !== undefined; }
+
+  function broadcast(a, b) {
+    // Overload: broadcast('spinning'|'reveal'|'idle', storage?) or legacy
+    // broadcast(storage?). No-arg callers (render, openPublic re-sync) get the
+    // phase computed from live state: title-free while spinning/buffering.
+    var phase = null;
+    var storage;
+    if (typeof a === 'string') { phase = a; storage = b; }
+    else { storage = a; }
+    if (!phase) {
+      var c = core();
+      var st = c.state;
+      phase = (st.spinning || isPublicBuffer()) ? 'spinning' : (st.current ? 'reveal' : 'idle');
+    }
+    var msg = buildStateMessage(phase);
     if (channel) {
       try { channel.postMessage(msg); } catch (e) {}
     }
@@ -215,8 +294,10 @@
     $('totalStat').textContent = counters.total;
     $('remainingStat').textContent = counters.available;
     $('drawnStat').textContent = counters.drawn;
-    $('drawBtn').disabled = !av.length || st.spinning;
-    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || st.spinning;
+    // C-08: draw/confirm stay disabled through the spin AND the 3 s public
+    // buffer — isPublicBuffer() OR-ed with spinning (single predicate).
+    $('drawBtn').disabled = !av.length || st.spinning || isPublicBuffer();
+    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || st.spinning || isPublicBuffer();
     $('statusText').textContent = !st.songs.length ? 'Esperando listado de canciones'
       : !av.length ? 'No quedan canciones disponibles'
       : st.current && st.current.status === 'drawn' ? 'Canción sorteada: buscala en VirtualDJ'
@@ -236,9 +317,10 @@
   function setCurrentStatus(status) {
     var c = core();
     var st = c.state;
-    // C-03 draw-engine spinning guard: confirm blocked mid-spin, no effect
-    // until the reveal completes (finishCommit clears spinning).
-    if (st.spinning) return;
+    // C-03 draw-engine spinning guard + C-08 public-buffer guard: confirm
+    // blocked mid-spin AND mid-buffer, no effect until the public reveal
+    // completes (C-09 confirm gates on this: sin giro ni buffer pendiente).
+    if (st.spinning || isPublicBuffer()) return;
     if (!st.current || st.current.status !== 'drawn') return;
     st.current.status = status;
     var h = null;
@@ -267,10 +349,13 @@
 
   // Secure draw UI flow: commit via draw.pickAndCommit() BEFORE animation.
   function handleDrawClick() {
+    // C-08 buffer guard first (Node-testable): mid-buffer draws are no-ops
+    // even before reaching the DOM path below.
+    if (isPublicBuffer()) return null;
     if (typeof document === 'undefined') return null;
     var c = core();
     var st = c.state;
-    if (st.spinning || !c.available().length) return null;
+    if (st.spinning || isPublicBuffer() || !c.available().length) return null;
     // Commit-before-render (RN-SOR-02): the song is decided + persisted here;
     // the reveal callback below only renders via finishCommit() + render().
     var s = drawm().pickAndCommit();
@@ -286,7 +371,8 @@
     $('drawDesc').textContent = 'El resultado ya fue elegido al azar. Prepará VirtualDJ.';
     $('drawBtn').disabled = true;
     $('confirmBtn').disabled = true;
-    broadcast();
+    // C-08: commit-time envelope is title-free on both screens (wheels spin).
+    broadcast('spinning');
     // C-03 draw-engine: cancellable reveal owned by draw.js (SPIN_MS base only).
     drawm().scheduleReveal(function () {
       drawm().finishCommit();
@@ -298,7 +384,14 @@
       $('resultTitle').textContent = s.title;
       $('resultArtist').textContent = s.artist || 'Artista no especificado';
       $('result').classList.add('show');
-      render();
+      // C-08 asymmetric reveal (intentional): the operator reads the title NOW
+      // to cue VirtualDJ manual; the projector keeps the cabin message until
+      // the buffer elapses — hence `spinning`, never `reveal`, on this broadcast.
+      broadcast('spinning');
+      schedulePublicReveal(function () {
+        broadcast('reveal');
+        render();
+      });
     });
     return s;
   }
@@ -414,6 +507,7 @@
   }
 
   var publicWin = null;
+  function _resetPublicWinForTest() { publicWin = null; }
   function openPublic() {
     if (typeof window === 'undefined') return { ok: false, reason: 'no-window' };
     if (publicWin && !publicWin.closed) { publicWin.focus(); return { ok: true, refocused: true }; }
@@ -433,6 +527,7 @@
     var d = drawm();
     if (typeof document === 'undefined') {
       d.cancelReveal();
+      cancelPublicReveal();
       d.finishCommit();
       var c0 = core();
       c0.state.songs = [];
@@ -443,7 +538,10 @@
     var c = core();
     if (!confirm('¿Vaciar el listado de canciones? Esta acción no se puede deshacer.')) return false;
     if (c.state.history.length && !confirm('Ya hay historial. ¿Querés borrar también el historial y reiniciar la partida?')) return false;
+    // C-08: cancel BOTH the spin timer and the pending public reveal so no
+    // ghost result resurrects cleared state (mid-spin or mid-buffer alike).
     d.cancelReveal();
+    cancelPublicReveal();
     d.finishCommit();
     c.state.songs = [];
     c.state.history = [];
@@ -462,6 +560,7 @@
     var d = drawm();
     if (typeof document === 'undefined') {
       d.cancelReveal();
+      cancelPublicReveal();
       d.finishCommit();
       var c0 = core();
       c0.state.songs = [];
@@ -472,6 +571,7 @@
     var c = core();
     if (!confirm('¿Reiniciar toda la partida? Se borrarán canciones cargadas, sorteos e historial. Exportá el historial primero si lo necesitás.')) return false;
     d.cancelReveal();
+    cancelPublicReveal();
     d.finishCommit();
     c.state.songs = [];
     c.state.history = [];
@@ -624,6 +724,12 @@
     PUBLIC_URL: PUBLIC_URL,
     PUBLIC_CHANNEL: PUBLIC_CHANNEL,
     TRANSPORT_KEY: TRANSPORT_KEY,
+    REVEAL_DELAY_MS: REVEAL_DELAY_MS,
+    isPublicBuffer: isPublicBuffer,
+    schedulePublicReveal: schedulePublicReveal,
+    cancelPublicReveal: cancelPublicReveal,
+    setPublicTimerFns: setPublicTimerFns,
+    resetPublicTimerFns: resetPublicTimerFns,
     render: render,
     broadcast: broadcast,
     buildStateMessage: buildStateMessage,
@@ -643,6 +749,7 @@
     filterSongs: filterSongs,
     artistLabel: artistLabel,
     openPublic: openPublic,
+    _resetPublicWinForTest: _resetPublicWinForTest,
     initApp: initApp,
     CORRUPT_MESSAGE: CORRUPT_MESSAGE,
     NO_STORAGE_MESSAGE: NO_STORAGE_MESSAGE,

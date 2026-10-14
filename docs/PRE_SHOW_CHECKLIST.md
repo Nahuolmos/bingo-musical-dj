@@ -6,9 +6,11 @@ Todo ejecutable por doble-click, sin red (salvo PDF/DOCX que avisa fallback).
 - [ ] 2. Doble-click `public.html` → muestra `ESPERANDO EL SORTEO` + `¡Preparados para jugar!`, sin errores.
 - [ ] 3. Doble-click `tests.html` → 6/6 PASS, sin errores consola. Equivalente Node:
       `node --test tests/core.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js`
-- [ ] 4. Proyector: click `▣ Abrir pantalla pública` → abre `public.html`; mover al proyector/2ª pantalla. Si bloquea popup → permitir popups para el archivo y reintentar.
+- [ ] 4. Proyector: click `▣ Abrir pantalla pública` → abre `public.html`; mover al proyector/2ª pantalla. Si bloquea popup → permitir popups para el archivo y reintentar. Si la pública muestra el aviso de navegador → abrirla en Chrome/Edge actualizado (sin BroadcastChannel ni almacenamiento no hay sincronía).
+- [ ] 4b. Pantalla diferida (C-08): sortear 1 → la pública muestra `Buscando el tema en cabina…` SIN el título durante la ruleta + ~3 s de buffer (tiempo de buscar/cargar el tema en VirtualDJ manual) → luego revela el mismo título del operador con igual contador e historial reciente. Offline: el buffer funciona sin red (canal + espejo local).
 - [ ] 5. Offline drill: desconectar red → importar `assets/lista-ejemplo.csv` → 12 canciones, mensaje con duplicados (no silencioso). Sortear 1 → rueda gira, resultado comprometido antes de animación.
 - [ ] 6. VDJ manual + audio: resultado sorteado → buscar/cargar manual en VirtualDJ (el panel NO controla VDJ en v1) → probar audio y archivos musicales.
+- [ ] 6b. Re-sync post-recarga (C-06 + C-08): con la pública abierta, recargar el panel → banner `Partida recuperada…` → reabrir/actualizar la pública → muestra el estado vigente (sin títulos fantasma de sorteos anulados por vaciar/reiniciar a mitad de giro o buffer).
 - [ ] 7. Pre-export: click `Exportar historial` → CSV con BOM abre en Excel; columnas N°/Título/Artista/Estado/Hora.
 - [ ] 8. Reintento file://: si algo falla, comparar con `index.monolith.html` (referencia) y reportar; fallback solo si hace falta: `npx serve .`.
 
