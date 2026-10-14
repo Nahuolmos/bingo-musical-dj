@@ -252,7 +252,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-08] `public-screen-delayed-3s`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` completado (2026-10-14, archivado en `openspec/changes/archive/2026-10-14-c-08-public-screen-delayed-3s/`, spec `openspec/specs/public-screen/spec.md` con 6 requirements, tests 141/141 green — public 34/34, validate clean)
 - **Scope**: Doble pantalla con reveal retardado ~3 s para VirtualDJ manual, sin spoiler y legible (US-006, US-008; RN-PUB-01…03; IN-03; constraint 2)
   - `public.html` standalone (sin `document.write`): abre vía `window.open('public.html','musicBingoPublic','popup,…')`; reenfoca si abierta; `setTimeout(broadcast, 250)`; alerta si el bloqueador la frena. Fallback `BroadcastChannel` ausente → exigir Chrome/Edge actualizado.
   - Reveal en 2 fases (commit-before-render se mantiene): al comprometer se emite solo `{phase:'spinning'}` **sin título** (ruleta girando en ambas pantallas); el broadcast con `{phase:'reveal', title, artist}` se retrasa **~3000 ms tras el fin del giro del operador** para dar tiempo a buscar/reproducir en VirtualDJ manual. Constante `REVEAL_DELAY_MS = 3000` documentada en código y testeable.
