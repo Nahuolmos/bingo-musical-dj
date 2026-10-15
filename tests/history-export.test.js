@@ -34,8 +34,6 @@ function loadDeps() {
 }
 
 function teardown(draw, app, core) {
-  draw.resetTimerFns();
-  draw.cancelReveal();
   if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
   if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
   resetState(core);
@@ -155,7 +153,7 @@ describe('c-10 1.3: motivo survives RFC quoting (comma, quote, newline)', () => 
     // Arrange: quoted title/artist fixture + live void motivo from C-09 seam
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
-    draw.finishCommit();
+
     assert.equal(app.handleVoidRequest(() => 'Archivo corrupto', () => true), true);
     // Act
     const csv = app.buildCsv(core.state.history);
@@ -274,11 +272,11 @@ describe('c-10 2.1: delayed public reveal never duplicates history/CSV rows', ()
 
   afterEach(() => { teardown(draw, app, core); });
 
-  it('pickAndCommit -> finishCommit -> delayed reveal leaves exactly 1 entry and 1 CSV row', () => {
-    // Arrange: committed draw, spin ended, public buffer pending via injected fake (no wall clock)
+  it('pickAndCommit -> delayed reveal leaves exactly 1 entry and 1 CSV row', () => {
+    // Arrange: committed draw, public buffer pending via injected fake (no wall clock)
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
-    draw.finishCommit();
+
     const fake = makeFakeTimers();
     app.setPublicTimerFns(fake);
     let revealed = 0;
@@ -325,7 +323,7 @@ describe('c-10 2.2: history entries are ordered, timed, and updated in place', (
     for (let i = 0; i < 3; i++) {
       const s = draw.pickAndCommit(0);
       assert.ok(s, 'draw ' + (i + 1) + ' commits');
-      draw.finishCommit();
+  
       app.setCurrentStatus('played');
     }
     // Assert: monotonic n + valid time per entry
@@ -339,7 +337,7 @@ describe('c-10 2.2: history entries are ordered, timed, and updated in place', (
   it('confirm played updates the entry in place (n/time/snapshot kept, no new row)', () => {
     // Arrange: one committed draw
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const before = JSON.parse(JSON.stringify(core.state.history[0]));
     // Act
     app.setCurrentStatus('played');
@@ -356,7 +354,7 @@ describe('c-10 2.2: history entries are ordered, timed, and updated in place', (
   it('triangulate: void updates the same entry in place with motivo, CSV keeps one row', () => {
     // Arrange
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const nBefore = core.state.history[0].n;
     const timeBefore = core.state.history[0].time;
     // Act
@@ -395,7 +393,7 @@ describe('c-10 2.3: void motivo renders visible and inert in list + history', ()
     const doc = stubDocument();
     globalThis.document = doc;
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     assert.equal(app.handleVoidRequest(() => 'Falta el archivo', () => true), true);
     // Act
     app.render();
@@ -410,7 +408,7 @@ describe('c-10 2.3: void motivo renders visible and inert in list + history', ()
     const doc = stubDocument();
     globalThis.document = doc;
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const evil = "<script>alert('x')</scr" + 'ipt>';
     assert.equal(app.handleVoidRequest(() => evil, () => true), true);
     // Act

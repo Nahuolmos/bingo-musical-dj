@@ -61,8 +61,6 @@ function loadDeps() {
 }
 
 function teardown(draw, app, core) {
-  draw.resetTimerFns();
-  draw.cancelReveal();
   if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
   if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
   resetState(core);
@@ -81,12 +79,11 @@ describe('c-09 1.1: played happy path closes the draw', () => {
 
   afterEach(() => { teardown(draw, app, core); });
 
-  it('commit -> finishCommit -> setCurrentStatus played: song+entry played, current=null', () => {
-    // Arrange: committed draw, spin ended, no buffer pending
+  it('commit -> setCurrentStatus played: song+entry played, current=null', () => {
+    // Arrange: committed draw, no buffer pending
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
     const pickedId = picked.id;
-    draw.finishCommit();
     // Act
     app.setCurrentStatus('played');
     // Assert: independent literals — played terminal state, current cleared
@@ -101,12 +98,12 @@ describe('c-09 1.1: played happy path closes the draw', () => {
   it('triangulate: second song played keeps first played (monotonic, no resurrection)', () => {
     // Arrange
     const first = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     app.setCurrentStatus('played');
     const second = draw.pickAndCommit(0);
     assert.ok(second);
     assert.notEqual(second.id, first.id);
-    draw.finishCommit();
+
     // Act
     app.setCurrentStatus('played');
     // Assert
@@ -118,8 +115,8 @@ describe('c-09 1.1: played happy path closes the draw', () => {
   });
 });
 
-// ---- 1.2: played blocked mid-spin / mid-buffer / without drawn current ----
-describe('c-09 1.2: played gates (spin, buffer, no-current)', () => {
+// ---- 1.2: played blocked mid-buffer / without drawn current (c-15: no spin gate) ----
+describe('c-09 1.2: played gates (buffer, no-current)', () => {
   let core;
   let draw;
   let app;
@@ -131,26 +128,25 @@ describe('c-09 1.2: played gates (spin, buffer, no-current)', () => {
 
   afterEach(() => { teardown(draw, app, core); });
 
-  it('played mid-spin is a no-op (song/history/current unchanged)', () => {
-    // Arrange: commit leaves spinning=true until finishCommit
+  it('no spin gate remains: confirm works right after commit (no buffer)', () => {
+    // Arrange: C-15 retired the operator spin — the commit sets no flag
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
-    assert.equal(core.state.spinning, true);
-    const historyBefore = JSON.stringify(core.state.history);
+    assert.equal(core.state.spinning, false, 'no spin flag after commit');
+    assert.equal(app.isPublicBuffer(), false, 'no buffer unless scheduled');
     // Act
     app.setCurrentStatus('played');
-    // Assert
-    assert.equal(core.state.current && core.state.current.status, 'drawn');
-    assert.equal(core.state.history[0].status, 'drawn');
-    assert.equal(JSON.stringify(core.state.history), historyBefore);
-    assert.equal(picked.status, 'drawn');
+    // Assert: confirm lands immediately (buffer is the only gate left)
+    assert.equal(core.state.current, null);
+    assert.equal(core.state.history[0].status, 'played');
+    assert.equal(picked.status, 'played');
   });
 
   it('played mid-buffer is a no-op (injected public-timer fake, no wall clock)', () => {
-    // Arrange: spin ended, C-08 buffer pending via injected fake
+    // Arrange: C-08 buffer pending via injected fake
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
-    draw.finishCommit();
+
     const fake = makeFakeTimers();
     app.setPublicTimerFns(fake);
     app.schedulePublicReveal(() => {});
@@ -183,8 +179,8 @@ describe('c-09 1.2: played gates (spin, buffer, no-current)', () => {
   });
 });
 
-// ---- 1.3: operator buttons gate on current/spin/buffer ----
-describe('c-09 1.3: confirm buttons gate on current, spin, buffer', () => {
+// ---- 1.3: operator buttons gate on current/buffer (c-15: no spin gate) ----
+describe('c-09 1.3: confirm buttons gate on current, buffer', () => {
   let core;
   let draw;
   let app;
@@ -202,7 +198,7 @@ describe('c-09 1.3: confirm buttons gate on current, spin, buffer', () => {
     teardown(draw, app, core);
   });
 
-  it('buttons disabled without current, mid-spin, and mid-buffer; enabled post-reveal', () => {
+  it('buttons disabled without current and mid-buffer; enabled post-reveal', () => {
     // Arrange: stub DOM with the ids render() touches
     const doc = stubDocument();
     globalThis.document = doc;
@@ -211,14 +207,14 @@ describe('c-09 1.3: confirm buttons gate on current, spin, buffer', () => {
     // Assert 1
     assert.equal(doc._els.confirmBtn.disabled, true, 'confirm disabled without current');
     assert.equal(doc._els.drawBtn.disabled, false, 'draw enabled with pool available');
-    // Act 2: commit -> mid-spin
+    // Act 2: commit with no buffer — C-15 retired the spin gate, so the
+    // dashboard result is actionable at once (buffer is the only gate left)
     draw.pickAndCommit(0);
     app.render();
     // Assert 2
-    assert.equal(doc._els.drawBtn.disabled, true, 'drawBtn disabled mid-spin');
-    assert.equal(doc._els.confirmBtn.disabled, true, 'confirmBtn disabled mid-spin');
-    // Act 3: spin ended, buffer pending — buttons stay disabled
-    draw.finishCommit();
+    assert.equal(doc._els.drawBtn.disabled, false, 'drawBtn enabled pre-buffer (pool remains)');
+    assert.equal(doc._els.confirmBtn.disabled, false, 'confirmBtn enabled with drawn current, no buffer');
+    // Act 3: buffer pending — buttons stand down
     const fake = makeFakeTimers();
     app.setPublicTimerFns(fake);
     app.schedulePublicReveal(() => {});
@@ -249,9 +245,9 @@ describe('c-09 2.1: void without reason is blocked', () => {
   afterEach(() => { teardown(draw, app, core); });
 
   it('empty-string reason leaves song/history/current drawn', () => {
-    // Arrange: committed + revealed (no spin, no buffer)
+    // Arrange: committed (no spin, no buffer)
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     // Act: operator submits an empty reason, then confirms
     const res = app.handleVoidRequest(() => '', () => true);
@@ -266,7 +262,7 @@ describe('c-09 2.1: void without reason is blocked', () => {
   it('whitespace-only reason leaves song/history/current drawn (triangulate)', () => {
     // Arrange
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     // Act
     const res = app.handleVoidRequest(() => '   ', () => true);
@@ -294,7 +290,7 @@ describe('c-09 2.2: cancelled prompt or declined confirm aborts', () => {
   it('prompt cancelled (null) aborts with zero mutation', () => {
     // Arrange
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     let confirms = 0;
     // Act
@@ -310,7 +306,7 @@ describe('c-09 2.2: cancelled prompt or declined confirm aborts', () => {
   it('declined confirm (false) aborts with zero mutation (triangulate)', () => {
     // Arrange
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     // Act
     const res = app.handleVoidRequest(() => 'Falta el archivo en VirtualDJ', () => false);
@@ -338,7 +334,7 @@ describe('c-09 2.3: valid reason voids the draw', () => {
   it('non-empty reason + confirm voids song+entry with trimmed motivo, current=null', () => {
     // Arrange
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     // Act
     const res = app.handleVoidRequest(() => '  Falta el archivo en VirtualDJ  ', () => true);
     // Assert
@@ -384,7 +380,7 @@ describe('c-09 2.4: motivo visible and escaped', () => {
     const doc = stubDocument();
     globalThis.document = doc;
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     app.handleVoidRequest(() => 'Falta el archivo', () => true);
     // Act
     app.render();
@@ -399,7 +395,7 @@ describe('c-09 2.4: motivo visible and escaped', () => {
     const doc = stubDocument();
     globalThis.document = doc;
     draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const evil = "<script>alert('x')</scr" + 'ipt>';
     app.handleVoidRequest(() => evil, () => true);
     // Act
@@ -428,14 +424,14 @@ describe('c-09 3.1: void is terminal', () => {
   it('voided id never returns in available() across subsequent draws', () => {
     // Arrange: void the first draw with reason
     const first = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const voidedId = first.id;
     assert.equal(app.handleVoidRequest(() => 'Archivo corrupto', () => true), true);
     // Act: draw the remaining song and confirm it
     const second = draw.pickAndCommit(0);
     assert.ok(second);
     assert.notEqual(second.id, voidedId);
-    draw.finishCommit();
+
     app.setCurrentStatus('played');
     // Assert: pool exhausted, voided id absent everywhere eligible
     assert.equal(core.available().length, 0);
@@ -471,7 +467,7 @@ describe('c-09 3.2: motivo persists across refresh', () => {
     // Arrange: void with reason, then snapshot through the C-06 boundary
     const store = require(path.join(root, 'js', 'store.js'));
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     assert.equal(app.handleVoidRequest(() => 'Pista salteada', () => true), true);
     const mem = {};
     const storage = {
@@ -513,7 +509,7 @@ describe('c-09 3.3: copy leaves draw state untouched', () => {
   it('clipboard mock receives title — artist, song/history/current unchanged', () => {
     // Arrange
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     let clipboard = null;
     // Act
@@ -534,7 +530,7 @@ describe('c-09 3.3: copy leaves draw state untouched', () => {
     core.state.current = null;
     core.state.spinning = false;
     const picked = draw.pickAndCommit(0);
-    draw.finishCommit();
+
     const historyBefore = JSON.stringify(core.state.history);
     let prompted = null;
     // Act: no clipboard boundary -> legacy prompt fallback

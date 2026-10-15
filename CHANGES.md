@@ -382,6 +382,25 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 
 ---
 
+### [C-15] `instant-result-word-scroll`
+- **Estado**: `[x]` completado (2026-10-15, archivado en `openspec/changes/archive/2026-10-15-c-15-instant-result-word-scroll/`, specs `draw-no-repeat` + `public-screen` MODIFIED + `draw-engine` MODIFIED plegado opción A, tests 295/295 green — suite 268 + 27 nuevos, validate `--strict` limpio; aprobación explícita del operador 2026-10-15 "Perfecto así, archiva" con re-smoke ticker)
+- **Scope**: Resultado instantáneo en dashboard + buffer público con word-scroll anti-spoiler — retune post-v1 del reveal (US-006, US-008; RN-PUB-01…03; RN-SOR-06). Solo `js/app.js` + `js/draw.js` + `js/public.js` + espejo `public.html` (paridad verbatim test-guardeada); cero cambios de persistencia, bloqueo, historial o identidad La Pepa.
+  - Dashboard instantáneo: `handleDrawClick` commitea → pinta título+artista+copiar de inmediato → `broadcast('spinning')` → buffer público; retirada la maquinaria de giro del operador en `js/draw.js` (`SPIN_MS`, `scheduleReveal`/`cancelReveal`/`isRevealing`, textos `SORTEANDO` del path de sorteo; `pickAndCommit`/`secureIndex`/lock intactos) + guards re-keyed a `isPublicBuffer()` (sin término `spinning`).
+  - Delay público 3000→5000 ms (`REVEAL_DELAY_MS=5000`, única constante en `js/app.js`, tolerancia 250→500 ms); ticker word-scroll `SCROLL_STEP_MS=120` (paso ticker separado del total 5 s; `prefers-reduced-motion` → espera estática).
+  - Payload `scrollPool: [{id,title,artist}]` en el mensaje fase `spinning` (restantes post-commit, excluye la sorteada por id — colisión de títulos no spoilea); pública renderiza ventana fija de scroll vertical y cierra con el reveal real; pool vacío → espera neutra sin título; markup escapado.
+  - Guards/cancelación en el buffer: Sortear + Confirmar (played/void) sin efecto mid-buffer, habilitados al reveal; vaciar/reiniciar mid-buffer cancelan el reveal (máximo un reveal por commit, sin fantasmas ni pisados).
+  - Delta `draw-engine` plegado opción A (sin código): sin maquinaria de giro ni base 2750 ms en dashboard, guards cancelables re-keyed al buffer 5 s (coherente C-03/C-11); títulos de requirements/escenarios originales intactos.
+  - Gates manuales §6.2/§8.3 cerrados por aprobación del operador (smoke `file://` offline dashboard + `public.html` popup: sorteo→scroll 5 s→reveal→confirmar→exportar, cero CDN en path público + re-smoke ticker rápido).
+  - Tests: suite 295/295 VERDE (base 268 + 27: retune 5000, instantáneo commit-before-show, scrollPool, ticker `pickScrollItems`, guards buffer, paridad sin drift); contratos C-08 intactos como retuneados (2 fases sin spoiler, delay nombrado, popup standalone, solo-lectura, guards buffer, commit-antes-render 1 entrada).
+- **Dependencias**: C-08 (contratos retuneados), C-14 (identidad pública preservada), C-11 (v1 show-ready previo)
+- **Governance**: MEDIO
+- **Leer antes**:
+  - `knowledge-base/05_reglas_de_negocio.md` §Dominio: Pantalla pública (RN-PUB) + §Dominio: Sorteo (RN-SOR-06)
+  - `knowledge-base/06_funcionalidades.md` §US-006, §US-008
+  - `knowledge-base/07_flujos_principales.md` §Flujo 2, §Flujo 4
+
+---
+
 ## Qué cambió vs v1 (2026-10-13 re-run)
 
 | # | Constraint | Cambio en CHANGES.md |

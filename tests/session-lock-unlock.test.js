@@ -35,8 +35,6 @@ function resetState(core) {
 }
 
 function teardown(draw, app, core) {
-  draw.resetTimerFns();
-  draw.cancelReveal();
   if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
   if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
   resetState(core);
@@ -214,7 +212,6 @@ describe('c-11 2.1: valid motivo plus double confirm unlocks with an audit entry
     // Arrange: one committed draw (n=1, locked via the real commit path)
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
-    draw.finishCommit();
     assert.equal(core.state.history.length, 1);
     // Act
     const ret = app.handleUnlockRequest(() => 'R', () => true);
@@ -332,57 +329,47 @@ describe('c-11 3.1: timer-cancellation contract around lock guards', () => {
 
   afterEach(() => { teardown(draw, app, core); });
 
-  it('locked clear refusal mid-spin leaves the reveal handle pending (no timer touch)', () => {
-    // Arrange: commit locks + spins; spin reveal scheduled on fake timers
-    const drawFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
+  it('locked clear refusal mid-buffer leaves the reveal handle pending (no timer touch)', () => {
+    // Arrange: commit locks; public-buffer reveal scheduled on fake timers
+    const appFake = makeFakeTimers();
+    app.setPublicTimerFns(appFake);
     const picked = draw.pickAndCommit(0);
     assert.ok(picked);
     assert.equal(core.state.locked, true);
     let reveals = 0;
-    draw.scheduleReveal(() => { reveals += 1; });
-    assert.equal(draw.isRevealing(), true);
+    app.schedulePublicReveal(() => { reveals += 1; });
+    assert.equal(app.isPublicBuffer(), true);
     // Act: refused — guard-first means no confirm, no cancel, no mutation
     const ret = app.handleClearSongs();
     // Assert
     assert.equal(ret, false);
-    assert.equal(draw.isRevealing(), true, 'refusal must not cancel the in-flight reveal');
-    drawFake.fireAll();
+    assert.equal(app.isPublicBuffer(), true, 'refusal must not cancel the in-flight reveal');
+    appFake.fireAll();
     assert.equal(reveals, 1, 'pending reveal still fires after a refused clear');
   });
 
-  it('unlocked clear mid-spin cancels both handles and no delayed callback fires', () => {
-    // Arrange: fake timers on both seams, unlocked regime
-    const drawFake = makeFakeTimers();
+  it('unlocked clear mid-buffer cancels the handle and no delayed callback fires', () => {
+    // Arrange: fake timers on the buffer seam, unlocked regime
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     core.state.locked = false;
-    let operatorReveals = 0;
     let publicReveals = 0;
-    draw.scheduleReveal(() => { operatorReveals += 1; });
     app.schedulePublicReveal(() => { publicReveals += 1; });
     // Act
     const ret = app.handleClearSongs();
     // Assert
     assert.equal(ret, true);
-    assert.equal(draw.isRevealing(), false);
     assert.equal(app.isPublicBuffer(), false);
-    drawFake.fireAll();
     appFake.fireAll();
-    assert.equal(operatorReveals, 0, 'no ghost operator reveal after clear');
     assert.equal(publicReveals, 0, 'no ghost public reveal after clear');
   });
 
   it('unlocked reset mid-public-buffer cancels the buffer and it never fires', () => {
-    // Arrange: spin ended, public buffer pending, unlocked regime
-    const drawFake = makeFakeTimers();
+    // Arrange: public buffer pending, unlocked regime
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
-    draw.finishCommit();
     core.state.locked = false;
     let publicReveals = 0;
     app.schedulePublicReveal(() => { publicReveals += 1; });
@@ -392,7 +379,6 @@ describe('c-11 3.1: timer-cancellation contract around lock guards', () => {
     // Assert
     assert.equal(ret, true);
     assert.equal(app.isPublicBuffer(), false);
-    drawFake.fireAll();
     appFake.fireAll();
     assert.equal(publicReveals, 0, 'buffer reveal cancelled by mid-buffer reset');
     assert.equal(core.state.songs.length, 0);

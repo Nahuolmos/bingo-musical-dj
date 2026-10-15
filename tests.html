@@ -110,7 +110,7 @@
     assert(MBDJ.app.XLSX_VENDOR_SRC === 'vendor/sheetjs/xlsx.full.min.js', 'vendor path');
     assert(MBDJ.app.BLOCKED_MESSAGE === 'Lista bloqueada. Usá el Desbloqueo administrativo (C-11) para modificar el listado.', 'blocked verbatim');
   });
-  check('draw.js secureIndex en rango + spinning guard', function () {
+  check('draw.js secureIndex en rango (c-15: sin flag de giro)', function () {
     assert(MBDJ.draw, 'MBDJ.draw missing');
     for (var i = 0; i < 50; i++) {
       var v = MBDJ.draw.secureIndex(12);
@@ -248,16 +248,21 @@
     var back = MBDJ.public.parseTransportValue(fake.getItem());
     assert(MBDJ.public.isStateMessage(back), 'round-trip DJ->publica');
   });
-  check('publica diferida 3 s (c-08: spinning sin titulo -> reveal tras buffer)', function () {
-    assert(MBDJ.app.REVEAL_DELAY_MS === 3000, 'delay nombrado 3000');
-    assert(MBDJ.draw.SPIN_MS === 2750, 'base de giro intacta');
+  check('publica diferida 5 s (c-15: instant dashboard + scroll sin titulo -> reveal tras buffer)', function () {
+    assert(MBDJ.app.REVEAL_DELAY_MS === 5000, 'delay nombrado 5000');
+    assert(MBDJ.draw.SPIN_MS === undefined, 'sin base de giro');
+    assert(typeof MBDJ.draw.scheduleReveal === 'undefined', 'sin reveal de operador');
     assert(typeof MBDJ.app.isPublicBuffer === 'function', 'isPublicBuffer');
     assert(typeof MBDJ.app.schedulePublicReveal === 'function', 'schedulePublicReveal');
     assert(typeof MBDJ.app.cancelPublicReveal === 'function', 'cancelPublicReveal');
     var m = MBDJ.app.buildStateMessage('spinning');
     assert(m.phase === 'spinning' && m.current === null, 'spinning sin titulo');
+    assert(m.scrollPool && m.scrollPool.length >= 0, 'scrollPool en buffer');
     var html2 = MBDJ.public.buildPublicHTML();
-    assert(html2.indexOf('Buscando el tema en cabina') !== -1, 'mensaje cabina en buffer');
+    assert(html2.indexOf('Buscando el tema en cabina') !== -1, 'mensaje neutro como fallback');
+    assert(html2.indexOf('startScroll') !== -1, 'ticker word-scroll en buffer');
+    assert(MBDJ.public.SCROLL_STEP_MS === 120, 'paso nombrado 120 (ticker rapido, buffer 5 s intacto)');
+    assert(typeof MBDJ.public.pickScrollItems === 'function', 'pickScrollItems');
     assert(typeof MBDJ.public.requiresModernBrowser === 'function', 'requiresModernBrowser');
     assert(MBDJ.public.requiresModernBrowser({}) === true, 'sin BC ni storage pide navegador actual');
   });

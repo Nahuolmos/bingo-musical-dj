@@ -246,14 +246,15 @@ describe('c-14 fixes: 10. v4 operador — frame full-height + disco limpio + buf
     assert.ok(!/<p[\s>]/.test(vinylInner), 'sin parrafos dentro del disco');
     assert.ok(!/ESPERANDO|SORTEO|CANCI/.test(vinylInner), 'sin restos del label anterior en el disco');
   });
-  it('buffer C-08 intacto pero fuera del disco: #status tras el stage + regla .status + CABIN_MESSAGE en spinning', () => {
+  it('buffer C-15 intacto pero fuera del disco: #status tras el stage + regla .status + scroll en spinning', () => {
     const html = htmlOf();
     const css = styleOf(html);
     const inline = inlineOf(html);
     assert.ok(html.includes('id="waiting"'), '#waiting existe');
     assert.ok(/\.status\{[^}]*font-size:clamp\(/.test(css), 'regla .status propia (fuera del disco)');
-    assert.ok(inline.includes('Buscando el tema en cabina'), 'mensaje buffer C-08 preservado');
-    assert.ok(/phase==='spinning'[\s\S]*CABIN_MESSAGE/.test(inline), 'spinning usa CABIN_MESSAGE (sin titulo)');
+    assert.ok(inline.includes('Buscando el tema en cabina'), 'mensaje neutro preservado como fallback');
+    assert.ok(/phase==='spinning'[\s\S]*startScroll\(d,w\)/.test(inline), 'spinning usa el word-scroll (sin titulo)');
+    assert.ok(inline.includes('scrollPool'), 'el scroll se alimenta del payload offline');
   });
   it('IDs de estado preservados + logo top-left intacto', () => {
     const html = htmlOf();

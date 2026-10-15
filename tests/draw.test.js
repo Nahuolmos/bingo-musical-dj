@@ -24,7 +24,7 @@ describe('draw.js secureIndex + commit-before-render', () => {
     assert.ok(seen.size > 1, 'rejection sampling varies, got ' + [...seen].join(','));
   });
 
-  it('pickAndCommit decides before animation + spinning guard (commit-before-render)', () => {
+  it('pickAndCommit decides before paint + locks, with no spin flag (commit-before-render)', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
     core.state.songs = [
@@ -39,10 +39,11 @@ describe('draw.js secureIndex + commit-before-render', () => {
     assert.equal(picked.status, 'drawn');
     assert.equal(core.state.history.length, 1);
     assert.equal(core.state.history[0].status, 'drawn');
-    // spinning guard: second commit while spinning returns null
-    core.state.spinning = true;
-    assert.equal(draw.pickAndCommit(0), null);
-    core.state.spinning = false;
+    // C-15: no operator spin window exists — the commit sets no spinning flag;
+    // the single pending window is the app.js public buffer (isPublicBuffer).
+    assert.equal(core.state.spinning, false, 'no spin flag set by the commit');
+    assert.equal(typeof draw.SPIN_MS, 'undefined', 'no spin-base constant');
+    assert.equal(typeof draw.scheduleReveal, 'undefined', 'no operator reveal timer');
     core.state.songs = [];
     core.state.history = [];
     core.state.current = null;
@@ -157,114 +158,70 @@ function makeFakeTimers() {
   };
 }
 
-describe('c-03 2.1: cancellable reveal timeout (RED)', () => {
-  it('RED: draw exposes SPIN_MS=2750 + scheduleReveal/cancelReveal/isRevealing seam', () => {
+describe('c-15 2.3: no operator spin machinery (GREEN)', () => {
+  it('GREEN: draw exposes no SPIN_MS / scheduleReveal / cancelReveal / isRevealing seam', () => {
     const draw = require('../js/draw.js');
-    assert.equal(draw.SPIN_MS, 2750);
-    assert.equal(typeof draw.scheduleReveal, 'function');
-    assert.equal(typeof draw.cancelReveal, 'function');
-    assert.equal(typeof draw.isRevealing, 'function');
+    assert.equal(draw.SPIN_MS, undefined, 'spin base retired');
+    assert.equal(typeof draw.scheduleReveal, 'undefined', 'operator reveal timer retired');
+    assert.equal(typeof draw.cancelReveal, 'undefined', 'operator cancel retired');
+    assert.equal(typeof draw.isRevealing, 'undefined', 'operator pending flag retired');
+    assert.equal(typeof draw.setTimerFns, 'undefined', 'operator timer seam retired');
+    assert.equal(typeof draw.resetTimerFns, 'undefined', 'operator timer seam retired');
+    assert.equal(typeof draw.finishCommit, 'undefined', 'spin-coupled finishCommit retired');
+    assert.equal(typeof draw.secureIndex, 'function', 'secure path kept');
+    assert.equal(typeof draw.pickAndCommit, 'function', 'commit path kept');
   });
 
-  it('RED: schedule then cancel before fire -> callback never runs', () => {
-    const draw = require('../js/draw.js');
-    const fake = makeFakeTimers();
-    draw.setTimerFns(fake);
-    try {
-      let fired = 0;
-      draw.scheduleReveal(() => { fired++; });
-      assert.equal(draw.isRevealing(), true);
-      draw.cancelReveal();
-      assert.equal(draw.isRevealing(), false);
-      fake.fireAll();
-      assert.equal(fired, 0, 'cancelled reveal must never fire');
-    } finally {
-      draw.resetTimerFns();
+  it('GREEN: no 2750 literal governs any draw path (js/ + tests pin 5000 only)', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    for (const f of ['draw.js', 'app.js']) {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8');
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      assert.ok(!/2750/.test(code), 'no 2750 base in js/' + f);
     }
   });
 
-  it('RED: default reveal delay is SPIN_MS (2750), separate from any public-screen buffer', () => {
-    const draw = require('../js/draw.js');
-    const fake = makeFakeTimers();
-    draw.setTimerFns(fake);
-    try {
-      draw.scheduleReveal(() => {});
-      assert.equal(fake.pending.size, 1);
-      const [[, entry]] = Array.from(fake.pending.entries());
-      assert.equal(entry.ms, 2750);
-      draw.cancelReveal();
-    } finally {
-      draw.resetTimerFns();
-    }
-  });
-
-  it('RED: clearSongs path cancels an in-flight reveal (no ghost after vaciar mid-giro)', () => {
+  it('GREEN: pickAndCommit sets no spinning flag (buffer owns the guards)', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
-    const app = require('../js/app.js');
-    const fake = makeFakeTimers();
-    draw.setTimerFns(fake);
+    core.state.songs = [{ id: 's1', title: 'A', artist: 'X', status: 'available' }];
+    core.state.history = [];
+    core.state.current = null;
+    core.state.spinning = false;
     try {
-      core.state.songs = [{ id: 's1', title: 'A', artist: 'X', status: 'available' }];
-      core.state.history = [];
-      core.state.current = null;
-      core.state.spinning = false;
-      draw.pickAndCommit(0);
-      // Lock-regime seam (fix 2026-10-14, c-09): commit locks the catalog, and
-      // locked clear/reset are refused — so exercise the ghost-cancel wiring
-      // in the unlocked regime explicitly.
-      core.state.locked = false;
-      let fired = 0;
-      draw.scheduleReveal(() => { fired++; });
-      app.handleClearSongs();
-      fake.fireAll();
-      assert.equal(fired, 0, 'no ghost reveal after clear');
-      assert.equal(draw.isRevealing(), false);
-      assert.equal(core.state.songs.length, 0);
+      const picked = draw.pickAndCommit(0);
+      assert.ok(picked);
+      assert.equal(core.state.spinning, false, 'commit leaves spinning false');
+      assert.equal(core.state.locked, true, 'lock still activates on first commit');
     } finally {
-      draw.resetTimerFns();
       core.state.songs = [];
       core.state.history = [];
       core.state.current = null;
       core.state.spinning = false;
+      core.state.locked = false;
     }
   });
 
-  it('RED: resetAll path cancels an in-flight reveal (board stays reset)', () => {
+  it('GREEN: empty pool still blocks the draw (null, no history, control stays disabled)', () => {
+    const draw = require('../js/draw.js');
+    const core = require('../js/core.js');
+    core.state.songs = [];
+    core.state.history = [];
+    core.state.current = null;
+    core.state.spinning = false;
+    assert.equal(draw.pickAndCommit(0), null);
+    assert.equal(draw.pickAndCommit(), null);
+    assert.equal(core.state.history.length, 0);
+    assert.equal(core.state.current, null);
+  });
+}); // end c-15 2.3
+
+describe('c-15 2.3: buffer owns draw and confirm guards (GREEN)', () => {
+  it('mid-buffer draw via handleDrawClick returns null and leaves state unchanged', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
     const app = require('../js/app.js');
-    const fake = makeFakeTimers();
-    draw.setTimerFns(fake);
-    try {
-      core.state.songs = [{ id: 's1', title: 'A', artist: 'X', status: 'available' }];
-      core.state.history = [];
-      core.state.current = null;
-      core.state.spinning = false;
-      draw.pickAndCommit(0);
-      // Lock-regime seam (fix 2026-10-14, c-09): see clearSongs test above.
-      core.state.locked = false;
-      let fired = 0;
-      draw.scheduleReveal(() => { fired++; });
-      app.handleResetAll();
-      fake.fireAll();
-      assert.equal(fired, 0, 'no ghost reveal after reset');
-      assert.equal(draw.isRevealing(), false);
-      assert.equal(core.state.spinning, false);
-    } finally {
-      draw.resetTimerFns();
-      core.state.songs = [];
-      core.state.history = [];
-      core.state.current = null;
-      core.state.spinning = false;
-    }
-  });
-}); // end c-03 2.1
-
-describe('c-03 2.3: spinning guard blocks draw and confirm', () => {
-  it('double draw while spinning returns null and leaves state unchanged', () => {
-    const draw = require('../js/draw.js');
-    const core = require('../js/core.js');
     core.state.songs = [
       { id: 's1', title: 'A', artist: 'X', status: 'available' },
       { id: 's2', title: 'B', artist: 'Y', status: 'available' },
@@ -272,25 +229,31 @@ describe('c-03 2.3: spinning guard blocks draw and confirm', () => {
     core.state.history = [];
     core.state.current = null;
     core.state.spinning = false;
+    core.state.locked = false;
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
     try {
       const first = draw.pickAndCommit(0);
       assert.ok(first, 'first commit succeeds');
+      app.schedulePublicReveal(() => {});
+      assert.equal(app.isPublicBuffer(), true, 'buffer pending');
       const historyN = core.state.history.length;
       const currentId = core.state.current.id;
-      assert.equal(draw.pickAndCommit(1), null, 'second draw mid-spin blocked');
-      assert.equal(draw.pickAndCommit(), null, 'second draw mid-spin blocked (secure path too)');
+      assert.equal(app.handleDrawClick(), null, 'second draw mid-buffer blocked');
       assert.equal(core.state.history.length, historyN, 'history unchanged');
       assert.equal(core.state.current.id, currentId, 'current unchanged');
-      assert.equal(core.state.spinning, true, 'still spinning until reveal');
     } finally {
+      app.resetPublicTimerFns();
+      app.cancelPublicReveal();
       core.state.songs = [];
       core.state.history = [];
       core.state.current = null;
       core.state.spinning = false;
+      core.state.locked = false;
     }
   });
 
-  it('confirm (played/void) while spinning has no effect until reveal completes', () => {
+  it('confirm (played/void) mid-buffer has no effect until reveal completes', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
     const app = require('../js/app.js');
@@ -298,23 +261,30 @@ describe('c-03 2.3: spinning guard blocks draw and confirm', () => {
     core.state.history = [];
     core.state.current = null;
     core.state.spinning = false;
+    core.state.locked = false;
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
     try {
       draw.pickAndCommit(0);
-      assert.equal(core.state.spinning, true);
+      app.schedulePublicReveal(() => {});
       app.setCurrentStatus('played');
-      assert.equal(core.state.current && core.state.current.status, 'drawn', 'played blocked mid-spin');
-      assert.equal(core.state.history[0].status, 'drawn', 'history untouched mid-spin');
+      assert.equal(core.state.current && core.state.current.status, 'drawn', 'played blocked mid-buffer');
+      assert.equal(core.state.history[0].status, 'drawn', 'history untouched mid-buffer');
       app.setCurrentStatus('void');
-      assert.equal(core.state.current && core.state.current.status, 'drawn', 'void blocked mid-spin');
-      draw.finishCommit(); // reveal completes
+      assert.equal(core.state.current && core.state.current.status, 'drawn', 'void blocked mid-buffer');
+      fake.fireAll(); // buffer elapses (reveal would fire)
+      app.cancelPublicReveal();
       app.setCurrentStatus('played');
-      assert.equal(core.state.current, null, 'confirm works after reveal');
+      assert.equal(core.state.current, null, 'confirm works after the buffer');
       assert.equal(core.state.history[0].status, 'played');
     } finally {
+      app.resetPublicTimerFns();
+      app.cancelPublicReveal();
       core.state.songs = [];
       core.state.history = [];
       core.state.current = null;
       core.state.spinning = false;
+      core.state.locked = false;
     }
   });
 
@@ -328,18 +298,17 @@ describe('c-03 2.3: spinning guard blocks draw and confirm', () => {
     for (const c of calls) assert.ok(/pickAndCommit\(\s*\)/.test(c), 'no argument passed: ' + c);
   });
 
-  it('spin base is a single named constant, no divergent 2750 literal on the app path', () => {
+  it('no operator spin copy remains on the draw path (no SORTEANDO wheel state)', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const draw = require('../js/draw.js');
-    assert.equal(draw.SPIN_MS, 2750);
     const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
-    const appCode = appSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-    assert.ok(!/2750/.test(appCode), 'no hardcoded 2750 in app.js (uses SPIN_MS via scheduleReveal)');
-    assert.ok(!/window\.setTimeout/.test(appCode), 'no anonymous window.setTimeout left on the draw path');
-    assert.ok(/scheduleReveal\(/.test(appCode), 'reveal goes through scheduleReveal');
+    const code = appSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert.ok(!/SORTEANDO/.test(code), 'no SORTEANDO operator state on the draw path');
+    assert.ok(!/scheduleReveal\(/.test(code), 'no operator scheduleReveal on the draw path');
+    assert.ok(!/window\.setTimeout/.test(code), 'no anonymous window.setTimeout left on the draw path');
+    assert.ok(/schedulePublicReveal\(/.test(code), 'reveal goes through the public buffer');
   });
-}); // end c-03 2.3
+}); // end c-15 2.3
 
 // ---- c-07 helpers (fresh-state reset + in-memory storage seam) ----
 function c07Reset(core, songs) {
@@ -379,7 +348,6 @@ describe('c-07 1.1: draw without replacement over full catalog (N=12, secure pat
         const picked = draw.pickAndCommit();
         assert.ok(picked, 'draw ' + (k + 1) + ' picks a song');
         seen.add(picked.id);
-        draw.finishCommit();
       }
       assert.equal(seen.size, 12, 'no id appears twice');
       assert.equal(core.available().length, 0, 'pool exhausted');
@@ -403,7 +371,6 @@ describe('c-07 1.1: draw without replacement over full catalog (N=12, secure pat
       const first = draw.pickAndCommit(0);
       assert.ok(first);
       const firstId = first.id;
-      draw.finishCommit();
       const poolIds = core.available().map((s) => s.id);
       assert.ok(!poolIds.includes(firstId), 'committed song not eligible again');
       assert.equal(poolIds.length, 2);
@@ -460,7 +427,7 @@ describe('c-07 1.3: edges (0 -> null, 1 deterministic, exhausted copy)', () => {
       const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
       assert.ok(appSrc.includes('No quedan canciones disponibles'), 'exhausted copy frozen');
       assert.ok(appSrc.includes('Esperando listado de canciones'), 'empty copy branch kept');
-      assert.ok(/drawBtn.*disabled.*!av\.length \|\| .*spinning/.test(appSrc.replace(/\/\*[\s\S]*?\*\//g, '')), 'drawBtn disabled on empty/exhausted');
+      assert.ok(/drawBtn.*disabled.*!av\.length/.test(appSrc.replace(/\/\*[\s\S]*?\*\//g, '')), 'drawBtn disabled on empty/exhausted');
     } finally {
       c07Reset(core, []);
     }
@@ -480,7 +447,6 @@ describe('c-07 2.1: first-draw lock activation + import-reject round-trip', () =
       const first = draw.pickAndCommit(0);
       assert.ok(first);
       assert.equal(core.state.locked, true, 'lock activates on first commit');
-      draw.finishCommit();
       const second = draw.pickAndCommit(0);
       assert.ok(second);
       assert.equal(core.state.locked, true, 'lock stays true');
@@ -542,89 +508,90 @@ describe('c-07 2.1: first-draw lock activation + import-reject round-trip', () =
   });
 });
 
-describe('c-07 3.1: commit-before-reveal ordering (timer seam)', () => {
-  it('commit exists synchronously after pickAndCommit, before any scheduleReveal callback', () => {
+describe('c-07 3.1: commit-before-reveal ordering (no timer seam)', () => {
+  it('commit exists synchronously after pickAndCommit (history + current + lock)', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
     c07Reset(core, [
       { id: 'c07-t1', title: 'Tiempo Uno', artist: 'TA', status: 'available' },
       { id: 'c07-t2', title: 'Tiempo Dos', artist: 'TB', status: 'available' },
     ]);
-    const fake = makeFakeTimers();
-    draw.setTimerFns(fake);
     try {
       const picked = draw.pickAndCommit(0);
       assert.ok(picked);
-      // Synchronous commit assertions BEFORE any reveal callback fires:
+      // Synchronous commit assertions — no timer mediates the commit:
       assert.equal(picked.status, 'drawn');
       assert.ok(core.state.current, 'current set synchronously');
       assert.equal(core.state.current.id, picked.id);
       assert.equal(core.state.history.length, 1);
       assert.equal(core.state.history[0].status, 'drawn');
       assert.equal(core.state.history[0].id, picked.id);
-      let fired = 0;
-      draw.scheduleReveal(() => { fired++; });
-      assert.equal(fired, 0, 'reveal not yet fired');
-      assert.equal(draw.isRevealing(), true);
-      fake.fireAll();
-      assert.equal(fired, 1, 'reveal fires only via timer');
+      assert.equal(core.state.spinning, false, 'no spin flag pending');
+      assert.equal(core.state.locked, true, 'catalog locked synchronously');
     } finally {
-      draw.resetTimerFns();
-      draw.cancelReveal();
       c07Reset(core, []);
     }
   });
 });
 
-describe('c-07 3.3: mid-spin UI lock', () => {
-  it('second pickAndCommit mid-spin -> null + unchanged state (incl. locked)', () => {
+describe('c-15 3.3: buffer owns the UI lock (GREEN)', () => {
+  it('draw-level commits stay independent; the app buffer blocks repeats', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
+    const app = require('../js/app.js');
     c07Reset(core, [
       { id: 'c07-m1', title: 'Mid Uno', artist: 'MA', status: 'available' },
       { id: 'c07-m2', title: 'Mid Dos', artist: 'MB', status: 'available' },
     ]);
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
     try {
       const first = draw.pickAndCommit(0);
       assert.ok(first);
-      const n = core.state.history.length;
-      const curId = core.state.current.id;
       const lockedNow = core.state.locked;
-      assert.equal(draw.pickAndCommit(1), null);
-      assert.equal(draw.pickAndCommit(), null);
-      assert.equal(core.state.history.length, n);
-      assert.equal(core.state.current.id, curId);
+      // The draw engine no longer gates on a spin flag; the app buffer is
+      // the single owner that blocks repeats through handleDrawClick.
+      app.schedulePublicReveal(() => {});
+      assert.equal(app.isPublicBuffer(), true);
+      assert.equal(app.handleDrawClick(), null, 'repeat draw mid-buffer blocked');
       assert.equal(core.state.locked, lockedNow);
-      assert.equal(core.state.spinning, true);
+      assert.equal(core.state.spinning, false);
     } finally {
+      app.resetPublicTimerFns();
+      app.cancelPublicReveal();
       c07Reset(core, []);
     }
   });
 
-  it('setCurrentStatus blocked mid-spin; app.js keeps SORTEANDO texts + button disables + no-arg call site', () => {
+  it('setCurrentStatus blocked mid-buffer; dashboard shows the instant result + no-arg call site', () => {
     const draw = require('../js/draw.js');
     const core = require('../js/core.js');
     const app = require('../js/app.js');
     const fs = require('node:fs');
     const path = require('node:path');
     c07Reset(core, [{ id: 'c07-s1', title: 'Spin Uno', artist: 'SA', status: 'available' }]);
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
     try {
       draw.pickAndCommit(0);
+      app.schedulePublicReveal(() => {});
       app.setCurrentStatus('played');
       assert.equal(core.state.current && core.state.current.status, 'drawn');
       app.setCurrentStatus('void');
       assert.equal(core.state.current && core.state.current.status, 'drawn');
       const appSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
       const code = appSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-      assert.ok(appSrc.includes('SORTEANDO'), 'wheel SORTEANDO text kept');
-      assert.ok(appSrc.includes('La ruleta está girando'), 'heading explains result already chosen');
-      assert.ok(/drawBtn.*disabled\s*=\s*true/.test(code), 'drawBtn disabled mid-spin');
-      assert.ok(/confirmBtn.*disabled\s*=\s*true/.test(code), 'confirmBtn disabled mid-spin');
+      assert.ok(appSrc.includes('¡Esta es la canción!'), 'heading shows the instant result');
+      assert.ok(!/SORTEANDO/.test(code), 'no SORTEANDO intermediate state');
+      assert.ok(/drawBtn.*disabled\s*=\s*true/.test(code), 'drawBtn disabled mid-buffer');
+      assert.ok(/confirmBtn.*disabled\s*=\s*true/.test(code), 'confirmBtn disabled mid-buffer');
       const calls = code.match(/pickAndCommit\(([^)]*)\)/g) || [];
       assert.ok(calls.length >= 1);
       for (const c of calls) assert.ok(/pickAndCommit\(\s*\)/.test(c), 'production call passes no argument: ' + c);
     } finally {
+      app.resetPublicTimerFns();
+      app.cancelPublicReveal();
       c07Reset(core, []);
     }
   });
-}); // end c-07
+}); // end c-15

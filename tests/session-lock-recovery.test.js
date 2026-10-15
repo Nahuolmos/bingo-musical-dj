@@ -42,8 +42,6 @@ function resetState(core) {
 }
 
 function teardown(draw, app, core) {
-  draw.resetTimerFns();
-  draw.cancelReveal();
   if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
   if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
   resetState(core);

@@ -5,10 +5,12 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 
-// C-08 public-screen: two-phase reveal (spinning-without-title -> reveal).
+// C-08 public-screen: two-phase reveal (buffer-without-title -> reveal).
 // Seams under test (public interface only): app.buildStateMessage(phase),
-// app.REVEAL_DELAY_MS, app.broadcast/writeTransport, draw.SPIN_MS.
-// Timer seam: draw.setTimerFns + app.setPublicTimerFns (injected fakes, no sleeps).
+// app.REVEAL_DELAY_MS, app.broadcast/writeTransport, app.scrollPool payload.
+// Timer seam: app.setPublicTimerFns (injected fakes, no sleeps).
+// C-15: no operator spin remains — the dashboard is instant, the public
+// buffer scrolls remaining songs for 5 s and closes with the reveal.
 function freshState(core) {
   core.state.songs = [
     { id: 'c08-s1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'available' },
@@ -57,8 +59,6 @@ describe('c-08 1.1: phased envelope without spoiler (RED)', () => {
   });
 
   afterEach(() => {
-    draw.resetTimerFns();
-    draw.cancelReveal();
     if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
     if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
     resetState(core);
@@ -79,22 +79,20 @@ describe('c-08 1.1: phased envelope without spoiler (RED)', () => {
     assert.ok(!JSON.stringify(msg).includes('Fabulosos'), 'committed artist must not leak on the wire');
   });
 
-  it('REVEAL_DELAY_MS is a single named export === 3000', () => {
+  it('REVEAL_DELAY_MS is a single named export === 5000', () => {
     // Arrange (no commit needed — the constant is static)
     // Act
     const delay = app.REVEAL_DELAY_MS;
     // Assert: independent literal from the spec (not recomputed from code)
-    assert.equal(delay, 3000);
+    assert.equal(delay, 5000);
   });
 
-  it('public delay is distinct from the spin base (SPIN_MS stays 2750)', () => {
+  it('no spin base remains: only the named 5000 ms public delay exists', () => {
     // Arrange + Act
-    const spin = draw.SPIN_MS;
     const delay = app.REVEAL_DELAY_MS;
-    // Assert: independent literals — never merge the buffer into SPIN_MS
-    assert.equal(spin, 2750);
-    assert.equal(delay, 3000);
-    assert.notEqual(delay, spin);
+    // Assert: C-15 retired SPIN_MS — the buffer delay is the only timed window
+    assert.equal(typeof draw.SPIN_MS, 'undefined', 'no spin base');
+    assert.equal(delay, 5000);
   });
 
   it('reveal envelope {phase:reveal} carries the committed title/artist', () => {
@@ -128,6 +126,86 @@ describe('c-08 1.1: phased envelope without spoiler (RED)', () => {
   });
 });
 
+// ---- c-15 3.1: scrollPool anti-spoiler payload (RED) ----
+// The spinning-phase envelope carries the post-commit remaining pool for the
+// public word-scroll; the drawn song is excluded BY ID (title collisions from
+// other remaining songs are legitimate teaser content, not a spoiler).
+describe('c-15 3.1: scrollPool anti-spoiler payload (RED)', () => {
+  let core;
+  let draw;
+  let app;
+
+  beforeEach(() => {
+    core = require(path.join(root, 'js', 'core.js'));
+    draw = require(path.join(root, 'js', 'draw.js'));
+    app = require(path.join(root, 'js', 'app.js'));
+    core.state.songs = [
+      { id: 'c15-a', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'available' },
+      { id: 'c15-b', title: 'Gasolina', artist: 'Daddy Yankee', status: 'available' },
+      { id: 'c15-c', title: 'Levitating', artist: 'Dua Lipa', status: 'available' }
+    ];
+    core.state.history = [];
+    core.state.current = null;
+    core.state.spinning = false;
+    core.state.locked = false;
+  });
+
+  afterEach(() => {
+    if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
+    if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
+    resetState(core);
+  });
+
+  it('spinning message carries the post-commit remaining pool, drawn id excluded', () => {
+    // Arrange: commit the first song (forcedIndex 0 -> c15-a)
+    const picked = draw.pickAndCommit(0);
+    assert.ok(picked);
+    assert.equal(picked.id, 'c15-a');
+    // Act
+    const msg = app.buildStateMessage('spinning');
+    // Assert: pool snapshot built from available() AFTER the commit
+    assert.ok(Array.isArray(msg.scrollPool), 'scrollPool present');
+    assert.equal(msg.scrollPool.length, 2, 'only remaining songs travel');
+    const ids = msg.scrollPool.map((s) => s.id);
+    assert.ok(!ids.includes('c15-a'), 'drawn id excluded');
+    assert.ok(ids.includes('c15-b') && ids.includes('c15-c'), 'remaining ids included');
+    for (const entry of msg.scrollPool) {
+      assert.ok(typeof entry.title === 'string' && entry.title, 'entry carries title');
+      assert.ok(typeof entry.artist === 'string', 'entry carries artist');
+    }
+    // Assert: the drawn title still leaks nowhere else on the wire
+    assert.equal(msg.current, null);
+    assert.ok(!JSON.stringify(msg.history).includes('Matador'), 'drawn entry scrubbed from history');
+  });
+
+  it('title collision: same-title remaining song included, drawn id still excluded', () => {
+    // Arrange: a second remaining song shares the drawn title text
+    core.state.songs.push({ id: 'c15-d', title: 'Matador', artist: 'Banda Tributo', status: 'available' });
+    const picked = draw.pickAndCommit(0);
+    assert.equal(picked.id, 'c15-a', 'the original Matador was drawn');
+    // Act
+    const msg = app.buildStateMessage('spinning');
+    // Assert: exclusion is by id, not by title text
+    const ids = msg.scrollPool.map((s) => s.id);
+    assert.ok(!ids.includes('c15-a'), 'drawn id excluded even with colliding titles');
+    assert.ok(ids.includes('c15-d'), 'same-title remaining song still teased');
+    assert.equal(msg.scrollPool.length, 3);
+  });
+
+  it('empty remaining pool travels as an empty scrollPool (public degrades gracefully)', () => {
+    // Arrange: single-song catalog, the draw exhausts it
+    core.state.songs = [
+      { id: 'c15-only', title: 'Unica', artist: 'Solo', status: 'available' }
+    ];
+    draw.pickAndCommit(0);
+    // Act
+    const msg = app.buildStateMessage('spinning');
+    // Assert
+    assert.ok(Array.isArray(msg.scrollPool));
+    assert.equal(msg.scrollPool.length, 0);
+  });
+});
+
 describe('c-08 1.3: reveal timing tracks the named constant (injected timers)', () => {
   let core;
   let draw;
@@ -141,15 +219,13 @@ describe('c-08 1.3: reveal timing tracks the named constant (injected timers)', 
   });
 
   afterEach(() => {
-    draw.resetTimerFns();
-    draw.cancelReveal();
     if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
     if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
     resetState(core);
   });
 
   it('buffer defaults to REVEAL_DELAY_MS via the injectable seam (no wall clock)', () => {
-    // Arrange: app-level fake timers (same pattern as draw.js seam)
+    // Arrange: app-level fake timers (injectable seam, no wall clock)
     const fake = makeFakeTimers();
     app.setPublicTimerFns(fake);
     // Act
@@ -157,77 +233,66 @@ describe('c-08 1.3: reveal timing tracks the named constant (injected timers)', 
     // Assert: independent literal — the reveal waits exactly the named delay
     assert.equal(fake.pending.size, 1);
     const entry = Array.from(fake.pending.values())[0];
-    assert.equal(entry.ms, 3000);
+    assert.equal(entry.ms, 5000);
     assert.equal(app.isPublicBuffer(), true);
   });
 
-  it('reveal fires only after SPIN_MS + REVEAL_DELAY_MS, in order (spin -> buffer -> reveal)', () => {
-    // Arrange: both timer owners driven deterministically
-    const drawFake = makeFakeTimers();
+  it('reveal fires after REVEAL_DELAY_MS with no operator window (commit -> buffer -> reveal)', () => {
+    // Arrange: the single timer owner driven deterministically
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     const order = [];
-    // Act: operator spin scheduled on the draw.js owner (SPIN base only)
-    draw.scheduleReveal(() => {
-      order.push('spin-end');
-      // ...then the app.js owner chains the public buffer (design decision 2)
-      app.schedulePublicReveal(() => { order.push('public-reveal'); });
-    });
-    assert.deepEqual(order, [], 'nothing fires before the timers');
-    assert.equal(app.isPublicBuffer(), false, 'no buffer while the spin is in flight');
-    drawFake.fireAll(); // virtual t = SPIN_MS = 2750
-    assert.deepEqual(order, ['spin-end'], 'spin ends first, reveal still withheld');
-    assert.equal(app.isPublicBuffer(), true, 'buffer pending after spin end');
-    assert.equal(Array.from(appFake.pending.values())[0].ms, 3000, 'buffer waits the named delay');
-    appFake.fireAll(); // virtual t = 2750 + 3000 = 5750
+    // Act: the commit chains only the public buffer (no operator spin)
+    assert.equal(app.isPublicBuffer(), false, 'no buffer before scheduling');
+    app.schedulePublicReveal(() => { order.push('public-reveal'); });
+    assert.deepEqual(order, [], 'nothing fires before the timer');
+    assert.equal(app.isPublicBuffer(), true, 'buffer pending after commit');
+    assert.equal(Array.from(appFake.pending.values())[0].ms, 5000, 'buffer waits the named delay');
+    appFake.fireAll(); // virtual t = 5000
     // Assert
-    assert.deepEqual(order, ['spin-end', 'public-reveal']);
+    assert.deepEqual(order, ['public-reveal']);
     assert.equal(app.isPublicBuffer(), false, 'buffer handle released after firing');
   });
 
-  it('retuning the delay moves only the reveal (commit + spin + history untouched)', () => {
+  it('retuning the delay moves only the reveal (commit + history untouched)', () => {
     // Arrange
     const appFake = makeFakeTimers();
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     const historyBefore = core.state.history.length;
-    // Act: custom delay through the same seam (v1 constant stays 3000)
+    // Act: custom delay through the same seam (v1 constant stays 5000)
     app.schedulePublicReveal(() => {}, 500);
     // Assert
     assert.equal(Array.from(appFake.pending.values())[0].ms, 500);
-    assert.equal(app.REVEAL_DELAY_MS, 3000, 'named constant unchanged');
-    assert.equal(draw.SPIN_MS, 2750, 'spin base unchanged');
+    assert.equal(app.REVEAL_DELAY_MS, 5000, 'named constant unchanged');
+    assert.equal(typeof draw.SPIN_MS, 'undefined', 'no spin base left to move');
     assert.equal(core.state.history.length, historyBefore, 'no extra history entry from scheduling');
     assert.equal(core.state.history.length, 1, 'exactly one entry per draw (C-10 contract)');
   });
 
-  it('reveal lands within ±250 ms of the configured delay (E2E tolerance bound)', () => {
-    // Arrange: virtual clock — spin ends at t=SPIN_MS, reveal at t=SPIN_MS+delay
-    const TOLERANCE_MS = 250; // independent literal from specs/public-screen
-    const spinEnd = draw.SPIN_MS;
-    const revealAt = spinEnd + app.REVEAL_DELAY_MS;
+  it('reveal lands within ±500 ms of the configured delay (E2E tolerance bound)', () => {
+    // Arrange: virtual clock — commit at t=0, reveal at t=delay
+    const TOLERANCE_MS = 500; // independent literal from specs/public-screen
+    const commitAt = 0;
+    const revealAt = commitAt + app.REVEAL_DELAY_MS;
     // Act
-    const elapsedSinceSpinEnd = revealAt - spinEnd;
+    const elapsedSinceCommit = revealAt - commitAt;
     // Assert
     assert.ok(
-      Math.abs(elapsedSinceSpinEnd - app.REVEAL_DELAY_MS) <= TOLERANCE_MS,
-      'reveal offset ' + elapsedSinceSpinEnd + ' ms within ±' + TOLERANCE_MS + ' ms of ' + app.REVEAL_DELAY_MS
+      Math.abs(elapsedSinceCommit - app.REVEAL_DELAY_MS) <= TOLERANCE_MS,
+      'reveal offset ' + elapsedSinceCommit + ' ms within ±' + TOLERANCE_MS + ' ms of ' + app.REVEAL_DELAY_MS
     );
   });
 
   it('commit exists before any phase timer fires (commit-before-render preserved)', () => {
     // Arrange
-    const drawFake = makeFakeTimers();
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     // Act: synchronous commit, then schedule (never fired here)
     const picked = draw.pickAndCommit(0);
-    draw.scheduleReveal(() => {});
     app.schedulePublicReveal(() => {});
-    // Assert: song status, current pointer and history exist pre-animation
+    // Assert: song status, current pointer and history exist pre-paint
     assert.ok(picked);
     assert.equal(picked.status, 'drawn');
     assert.ok(core.state.current, 'current set synchronously');
@@ -556,22 +621,17 @@ describe('c-08 3.1: buffer-aware input guards (RED)', () => {
   afterEach(() => {
     if (savedDocument === undefined) { try { delete globalThis.document; } catch (e) {} }
     else { globalThis.document = savedDocument; }
-    draw.resetTimerFns();
-    draw.cancelReveal();
     if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
     if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
     resetState(core);
   });
 
-  it('draw is a no-op during the 3 s buffer (no second commit, history untouched)', () => {
-    // Arrange: spin ended (operator revealed locally), public buffer pending
+  it('draw is a no-op during the 5 s buffer (no second commit, history untouched)', () => {
+    // Arrange: committed + public buffer pending (instant dashboard result)
     globalThis.document = c08StubDocument();
-    const drawFake = makeFakeTimers();
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
-    draw.finishCommit();
     app.schedulePublicReveal(() => {});
     assert.equal(app.isPublicBuffer(), true);
     const historyBefore = core.state.history.length;
@@ -583,22 +643,27 @@ describe('c-08 3.1: buffer-aware input guards (RED)', () => {
     assert.equal(core.state.history.length, 1);
   });
 
-  it('draw is a no-op mid-spin (triangulation with C-03 guard)', () => {
-    // Arrange
+  it('draw works again after the buffer elapses (single reveal per commit)', () => {
+    // Arrange: committed + buffer pending, then the buffer elapses
     globalThis.document = c08StubDocument();
+    const appFake = makeFakeTimers();
+    app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
-    assert.equal(core.state.spinning, true);
-    // Act
-    const res = app.handleDrawClick();
-    // Assert
-    assert.equal(res, null);
+    app.schedulePublicReveal(() => {});
+    assert.equal(app.handleDrawClick(), null, 'blocked mid-buffer');
+    // Act: the buffer elapses (reveal fired), operator confirms the played song
+    appFake.fireAll();
+    assert.equal(app.isPublicBuffer(), false);
+    app.setCurrentStatus('played');
+    // Assert: confirm lands post-reveal; single entry per draw (C-10 contract)
+    assert.equal(core.state.current, null);
     assert.equal(core.state.history.length, 1);
+    assert.equal(core.state.history[0].status, 'played');
   });
 
   it('played/void confirm is a no-op during the buffer (waits for the reveal)', () => {
-    // Arrange: committed + spin ended + buffer pending (C-09 will gate on this)
+    // Arrange: committed + buffer pending (C-09 gates on this)
     draw.pickAndCommit(0);
-    draw.finishCommit();
     const appFake = makeFakeTimers();
     app.setPublicTimerFns(appFake);
     app.schedulePublicReveal(() => {});
@@ -614,30 +679,29 @@ describe('c-08 3.1: buffer-aware input guards (RED)', () => {
     assert.equal(core.state.history[0].status, 'drawn');
   });
 
-  it('played/void confirm is a no-op mid-spin (triangulation with C-03 guard)', () => {
-    // Arrange
+  it('played/void confirm works with no buffer (no spin gate remains)', () => {
+    // Arrange: committed, no buffer pending
     draw.pickAndCommit(0);
-    // Act + Assert (C-03 behavior, must survive C-08)
+    assert.equal(app.isPublicBuffer(), false);
+    // Act + Assert: confirm lands at once (buffer is the only gate left)
     app.setCurrentStatus('played');
-    assert.equal(core.state.current && core.state.current.status, 'drawn');
-    app.setCurrentStatus('void');
-    assert.equal(core.state.current && core.state.current.status, 'drawn');
+    assert.equal(core.state.current, null);
+    assert.equal(core.state.history[0].status, 'played');
   });
 
-  it('render disables drawBtn + confirmBtn through the spin AND the buffer', () => {
+  it('render disables drawBtn + confirmBtn through the buffer', () => {
     // Arrange
     const doc = c08StubDocument();
     globalThis.document = doc;
     const appFake = makeFakeTimers();
     app.setPublicTimerFns(appFake);
-    // Act 1: mid-spin
+    // Act 1: commit with no buffer — instant result actionable at once
     draw.pickAndCommit(0);
     app.render();
     // Assert 1
-    assert.equal(doc._els.drawBtn.disabled, true, 'drawBtn disabled mid-spin');
-    assert.equal(doc._els.confirmBtn.disabled, true, 'confirmBtn disabled mid-spin');
-    // Act 2: spin ended, buffer pending — buttons stay disabled
-    draw.finishCommit();
+    assert.equal(doc._els.drawBtn.disabled, false, 'drawBtn enabled pre-buffer (pool remains)');
+    assert.equal(doc._els.confirmBtn.disabled, false, 'confirmBtn enabled with drawn current');
+    // Act 2: buffer pending — buttons stand down
     app.schedulePublicReveal(() => {});
     app.render();
     // Assert 2
@@ -647,19 +711,15 @@ describe('c-08 3.1: buffer-aware input guards (RED)', () => {
 
   it('history holds exactly one entry per draw after the delayed reveal fires', () => {
     // Arrange
-    const drawFake = makeFakeTimers();
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     let reveals = 0;
-    draw.scheduleReveal(() => { reveals++; });
     app.schedulePublicReveal(() => { reveals++; });
-    // Act: spin ends, then the buffer elapses (delayed public reveal)
-    drawFake.fireAll();
+    // Act: the buffer elapses (delayed public reveal)
     appFake.fireAll();
     // Assert: the delayed reveal adds no history entry (C-10 contract)
-    assert.equal(reveals, 2, 'both timers fired');
+    assert.equal(reveals, 1, 'buffer timer fired once');
     assert.equal(core.state.history.length, 1);
     assert.equal(core.state.history[0].status, 'drawn');
   });
@@ -678,45 +738,35 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
   });
 
   afterEach(() => {
-    draw.resetTimerFns();
-    draw.cancelReveal();
     if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
     if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
     resetState(core);
   });
 
-  it('clear mid-spin: neither operator nor public reveal fires afterward', () => {
-    // Arrange: commit + spin in flight (Node branch: synchronous confirms first)
-    const drawFake = makeFakeTimers();
+  it('clear with no buffer pending wipes cleanly (unlocked regime)', () => {
+    // Arrange: committed, no buffer pending (Node branch: synchronous confirms first)
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     // Lock-regime seam (fix 2026-10-14, c-09): commit locks; locked clear is
     // refused (see tests/session-lock-recovery.test.js) — unlock here to keep
-    // exercising the ghost-cancel wiring in the unlocked regime.
+    // exercising the wipe path in the unlocked regime.
     core.state.locked = false;
-    let operatorReveals = 0;
-    draw.scheduleReveal(() => { operatorReveals++; });
     // Act
     app.handleClearSongs();
-    // Assert: state wiped, both handles released
+    // Assert: state wiped, no handle pending
     assert.equal(core.state.songs.length, 0);
-    assert.equal(draw.isRevealing(), false);
+    assert.equal(core.state.current, null);
     assert.equal(app.isPublicBuffer(), false);
-    drawFake.fireAll();
     appFake.fireAll();
-    assert.equal(operatorReveals, 0, 'no ghost operator reveal after clear');
+    assert.equal(core.state.songs.length, 0, 'no ghost reveal after clear');
   });
 
-  it('clear mid-buffer: neither operator nor public reveal fires afterward', () => {
-    // Arrange: spin ended (operator revealed locally), buffer pending
-    const drawFake = makeFakeTimers();
+  it('clear mid-buffer: the pending public reveal never fires afterward', () => {
+    // Arrange: committed + buffer pending
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
-    draw.finishCommit();
     // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
     core.state.locked = false;
     let publicReveals = 0;
@@ -728,50 +778,36 @@ describe('c-08 3.3: clear/reset cancel both pending reveals (no ghosts)', () => 
     assert.equal(core.state.songs.length, 0);
     assert.equal(core.state.current, null);
     assert.equal(app.isPublicBuffer(), false);
-    drawFake.fireAll();
     appFake.fireAll();
     assert.equal(publicReveals, 0, 'no ghost public reveal after mid-buffer clear');
   });
 
-  it('reset mid-spin: board stays reset, no reveal fires afterward', () => {
+  it('reset with no buffer pending: board stays reset, no reveal fires afterward', () => {
     // Arrange
-    const drawFake = makeFakeTimers();
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
     core.state.locked = false;
-    let operatorReveals = 0;
-    draw.scheduleReveal(() => { operatorReveals++; });
     // Act
     app.handleResetAll();
     // Assert
     assert.equal(core.state.songs.length, 0);
     assert.equal(core.state.history.length, 0);
     assert.equal(core.state.spinning, false);
-    assert.equal(draw.isRevealing(), false);
     assert.equal(app.isPublicBuffer(), false);
-    drawFake.fireAll();
     appFake.fireAll();
-    assert.equal(operatorReveals, 0, 'no ghost operator reveal after reset');
+    assert.equal(core.state.songs.length, 0, 'board stays reset');
   });
 
   it('reset mid-buffer: neither screen resurrects the committed title', () => {
-    // Arrange: commit + spin ended + buffer pending, then reset
-    const drawFake = makeFakeTimers();
+    // Arrange: commit + buffer pending, then reset
     const appFake = makeFakeTimers();
-    draw.setTimerFns(drawFake);
     app.setPublicTimerFns(appFake);
     draw.pickAndCommit(0);
     // Lock-regime seam (fix 2026-10-14, c-09): unlock to exercise wipe path.
     core.state.locked = false;
-    let operatorReveals = 0;
     let publicReveals = 0;
-    draw.scheduleReveal(() => { operatorReveals++; });
-    drawFake.fireAll(); // spin ends (operator reveal would have fired pre-reset)
-    draw.finishCommit();
-    assert.equal(operatorReveals, 1, 'spin reveal fired before the reset');
     app.schedulePublicReveal(() => { publicReveals++; });
     // Act
     app.handleResetAll();
@@ -804,14 +840,12 @@ describe('c-08 4.1: double-screen sync DJ -> publica (portable two-harness E2E)'
   });
 
   afterEach(() => {
-    draw.resetTimerFns();
-    draw.cancelReveal();
     if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
     if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
     resetState(core);
   });
 
-  it('spin -> no title -> buffer cabin message -> reveal syncs counters/last-5', () => {
+  it('commit -> buffer scroll -> reveal syncs counters/last-5', () => {
     // Arrange: booted public page + DJ->publica storage mirror + mocked clock
     const ctx = c08BootPublic(null);
     const slot = { v: null };
@@ -827,18 +861,20 @@ describe('c-08 4.1: double-screen sync DJ -> publica (portable two-harness E2E)'
     const picked = draw.pickAndCommit(0);
     app.writeTransport(app.buildStateMessage('spinning'), mirror);
     syncToPublic();
-    // Assert 1: projector shows the cabin message, never the committed title
-    assert.equal(ctx.els.waiting.textContent, 'Buscando el tema en cabina…');
-    assert.equal((ctx.els.title && ctx.els.title.textContent) || '', '', 'no title during the spin');
-    // Act 2: spin ends (operator reveals locally to cue VirtualDJ), buffer starts
-    draw.finishCommit();
+    // Assert 1: projector scrolls remaining songs, never the committed title
+    assert.ok(ctx.els.waiting.textContent.includes('Gasolina'), 'scroll teases remaining, got: ' + ctx.els.waiting.textContent);
+    assert.ok(!ctx.els.waiting.textContent.includes('Matador'), 'drawn title never teased');
+    assert.equal((ctx.els.title && ctx.els.title.textContent) || '', '', 'no title during the buffer');
+    // Act 2: dashboard already shows the result while the buffer runs —
+    // the projector still hides the title behind the buffer
     app.schedulePublicReveal(() => {
       app.writeTransport(app.buildStateMessage('reveal'), mirror);
     });
     app.writeTransport(app.buildStateMessage('spinning'), mirror);
     syncToPublic();
-    // Assert 2: buffer still hides the title behind the cabin message
-    assert.equal(ctx.els.waiting.textContent, 'Buscando el tema en cabina…');
+    // Assert 2: buffer still hides the title behind the word-scroll
+    assert.ok(ctx.els.waiting.textContent.includes('Gasolina'), 'scroll continues, got: ' + ctx.els.waiting.textContent);
+    assert.ok(!ctx.els.waiting.textContent.includes('Matador'), 'drawn title never teased');
     assert.equal((ctx.els.title && ctx.els.title.textContent) || '', '', 'no title during the buffer');
     // Act 3: the buffer elapses -> reveal envelope syncs to the projector
     appFake.fireAll();
@@ -854,6 +890,467 @@ describe('c-08 4.1: double-screen sync DJ -> publica (portable two-harness E2E)'
       assert.ok(ctx.els.history.innerHTML.includes(core.esc(h.title)), 'last-5 carries n=' + h.n);
     }
     assert.equal(core.state.history.length, 1, 'single history entry per draw');
+  });
+});
+
+// ---- c-15 2.1: instant dashboard result (RED) ----
+// The DJ sees title+artist+copy the instant the commit lands: no operator
+// wheel animation, no operator-side timeout. Commit-before-show intact.
+function c15StubDocument() {
+  const els = {};
+  function el(id) {
+    if (!els[id]) {
+      const rec = { _cls: [] };
+      els[id] = {
+        textContent: '', innerHTML: '', value: '', disabled: false, offsetWidth: 0,
+        classList: {
+          add(c) { if (!rec._cls.includes(c)) rec._cls.push(c); },
+          remove(c) { const i = rec._cls.indexOf(c); if (i !== -1) rec._cls.splice(i, 1); },
+          contains(c) { return rec._cls.includes(c); }
+        },
+        _rec: rec
+      };
+    }
+    return els[id];
+  }
+  return { getElementById: el, _els: els };
+}
+
+describe('c-15 2.1: instant dashboard result (RED)', () => {
+  let core;
+  let draw;
+  let app;
+  let savedDocument;
+
+  beforeEach(() => {
+    core = require(path.join(root, 'js', 'core.js'));
+    draw = require(path.join(root, 'js', 'draw.js'));
+    app = require(path.join(root, 'js', 'app.js'));
+    freshState(core);
+    savedDocument = globalThis.document;
+  });
+
+  afterEach(() => {
+    if (savedDocument === undefined) { try { delete globalThis.document; } catch (e) {} }
+    else { globalThis.document = savedDocument; }
+    if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
+    if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
+    resetState(core);
+  });
+
+  it('sortear paints title+artist+copy immediately with no operator animation', () => {
+    // Arrange
+    const doc = c15StubDocument();
+    globalThis.document = doc;
+    const appFake = makeFakeTimers();
+    app.setPublicTimerFns(appFake);
+    // Act: the operator hits Sortear (forcedIndex-free production path)
+    const picked = draw.pickAndCommit(0);
+    assert.ok(picked, 'commit succeeds');
+    // Commit-before-show: status + current + history exist synchronously,
+    // before any paint or broadcast (RN-SOR-02 unchanged)
+    assert.equal(picked.status, 'drawn');
+    assert.ok(core.state.current, 'current set synchronously');
+    assert.equal(core.state.history.length, 1, 'one history entry synchronously');
+    assert.equal(core.state.locked, true, 'catalog locked synchronously');
+    // Assert: dashboard result available at once (copy seam reads current)
+    assert.equal(app.formatCopyText(core.state.current), picked.title + ' — ' + picked.artist);
+  });
+
+  it('handleDrawClick paints the result synchronously and owns only the public buffer', () => {
+    // Arrange
+    const doc = c15StubDocument();
+    globalThis.document = doc;
+    const appFake = makeFakeTimers();
+    app.setPublicTimerFns(appFake);
+    // Act
+    const s = app.handleDrawClick();
+    // Assert: immediate result on the dashboard (no operator timeout)
+    assert.ok(s, 'draw returns the song');
+    assert.equal(doc._els.resultTitle.textContent, s.title, 'title painted at once');
+    assert.equal(doc._els.resultArtist.textContent, s.artist, 'artist painted at once');
+    assert.ok(doc._els.result.classList.contains('show'), 'result panel visible at once');
+    assert.equal(typeof draw.scheduleReveal, 'undefined', 'no operator-side reveal exists');
+    assert.equal(app.isPublicBuffer(), true, 'only the 5 s public buffer is pending');
+    assert.equal(Array.from(appFake.pending.values())[0].ms, 5000, 'buffer waits the named delay');
+    // Assert: commit-before-show intact (history entry precedes every paint)
+    assert.equal(core.state.history.length, 1);
+    assert.equal(core.state.history[0].id, s.id);
+    assert.equal(core.state.history[0].status, 'drawn');
+  });
+});
+
+// ---- c-15 4.1: word-scroll ticker seams + inline renderer (RED) ----
+describe('c-15 4.1: scroll seams in js/public.js (RED)', () => {
+  let pub;
+
+  beforeEach(() => {
+    pub = require(path.join(root, 'js', 'public.js'));
+  });
+
+  it('SCROLL_STEP_MS is the single named step of 120 ms (fast ticker, buffer untouched)', () => {
+    assert.equal(pub.SCROLL_STEP_MS, 120);
+  });
+
+  it('step and buffer are two separate named timings (SCROLL_STEP_MS << REVEAL_DELAY_MS)', () => {
+    const app = require(path.join(root, 'js', 'app.js'));
+    assert.equal(app.REVEAL_DELAY_MS, 5000, 'total buffer intact');
+    assert.equal(pub.SCROLL_STEP_MS, 120, 'fast ticker step');
+    assert.ok(pub.SCROLL_STEP_MS < app.REVEAL_DELAY_MS, 'step is not the buffer');
+  });
+
+  it('pickScrollItems never returns the drawn id (structural anti-spoiler)', () => {
+    const pool = [
+      { id: 'a', title: 'Matador', artist: 'X' },
+      { id: 'b', title: 'Gasolina', artist: 'Y' }
+    ];
+    const items = pub.pickScrollItems(pool, 'a');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].id, 'b');
+    assert.equal(items[0].title, 'Gasolina');
+  });
+
+  it('pickScrollItems keeps same-title remaining songs (exclusion is by id)', () => {
+    const pool = [
+      { id: 'drawn-1', title: 'Matador', artist: 'Original' },
+      { id: 'rest-9', title: 'Matador', artist: 'Banda Tributo' }
+    ];
+    const items = pub.pickScrollItems(pool, 'drawn-1');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].id, 'rest-9');
+  });
+
+  it('pickScrollItems degrades on empty/missing pool (no throw, no title)', () => {
+    assert.deepEqual(pub.pickScrollItems([], 'x'), []);
+    assert.deepEqual(pub.pickScrollItems(null, 'x'), []);
+    assert.deepEqual(pub.pickScrollItems(undefined, 'x'), []);
+  });
+
+  it('nextScrollIndex advances one step and wraps (triangulate)', () => {
+    assert.equal(pub.nextScrollIndex(0, 3), 1);
+    assert.equal(pub.nextScrollIndex(1, 3), 2);
+    assert.equal(pub.nextScrollIndex(2, 3), 0, 'wraps around');
+    assert.equal(pub.nextScrollIndex(0, 1), 0, 'single entry stays');
+    assert.equal(pub.nextScrollIndex(0, 0), 0, 'empty pool stays');
+  });
+
+  it('scrollSessionKey pins a commit (drawn count + history length)', () => {
+    const d = { drawn: 2, history: [{ n: 1 }, { n: 2 }] };
+    assert.equal(pub.scrollSessionKey(d), '2|2');
+    assert.equal(pub.scrollSessionKey({ drawn: 2, history: [{ n: 1 }, { n: 2 }] }), '2|2', 'stable across re-broadcasts');
+    assert.notEqual(pub.scrollSessionKey({ drawn: 3, history: [{ n: 1 }, { n: 2 }, { n: 3 }] }), '2|2', 'new commit re-keys');
+  });
+
+  it('scrollLabel joins title and artist with the em-dash seam', () => {
+    assert.equal(pub.scrollLabel({ title: 'Matador', artist: 'Los Fabulosos' }), 'Matador — Los Fabulosos');
+    assert.equal(pub.scrollLabel({ title: 'Solo', artist: '' }), 'Solo');
+  });
+});
+
+// Harness for the REAL public inline with injectable scroll timers:
+// runs buildPublicHTML() in a minimal DOM + manual timer queue + matchMedia.
+function c15ScrollTimers() {
+  let seq = 0;
+  const pending = new Map();
+  return {
+    pending,
+    setTimeoutFn: (cb, ms) => { seq += 1; pending.set(seq, { cb, ms }); return seq; },
+    clearTimeoutFn: (id) => { pending.delete(id); },
+    fireOne: () => {
+      const first = Array.from(pending.keys())[0];
+      if (first === undefined) return false;
+      const p = pending.get(first);
+      pending.delete(first);
+      p.cb();
+      return true;
+    }
+  };
+}
+
+function c15BootPublic(preloaded, opts) {
+  const o = opts || {};
+  const pub = require(path.join(root, 'js', 'public.js'));
+  const html = pub.buildPublicHTML();
+  const inline = html.split('<script>')[1].split('</script>')[0];
+  new vm.Script(inline); // throws SyntaxError if the shipped block is broken
+  const writes = [];
+  const els = {};
+  function el(id) {
+    if (!els[id]) {
+      const rec = { _text: '', _html: '', _display: '', _cls: [] };
+      const node = {
+        get textContent() { return rec._text; },
+        set textContent(v) { rec._text = String(v); writes.push(id + '.textContent'); },
+        get innerHTML() { return rec._html; },
+        set innerHTML(v) { rec._html = String(v); writes.push(id + '.innerHTML'); },
+        get offsetWidth() { return 0; },
+        style: {},
+        classList: {
+          add(c) { if (!rec._cls.includes(c)) rec._cls.push(c); writes.push(id + '.add(' + c + ')'); },
+          remove(c) { const i = rec._cls.indexOf(c); if (i !== -1) rec._cls.splice(i, 1); },
+          contains(c) { return rec._cls.includes(c); }
+        },
+        _rec: rec
+      };
+      Object.defineProperty(node.style, 'display', {
+        get() { return rec._display; },
+        set(v) { rec._display = String(v); writes.push(id + '.display'); },
+        enumerable: true, configurable: true
+      });
+      els[id] = node;
+    }
+    return els[id];
+  }
+  const timers = c15ScrollTimers();
+  const handlers = {};
+  const store = {
+    _s: typeof preloaded === 'string' ? preloaded : null,
+    getItem() { return this._s; },
+    setItem(k, v) { this._s = v; }
+  };
+  const win = {
+    addEventListener(t, fn) { (handlers[t] = handlers[t] || []).push(fn); },
+    matchMedia(q) { return { matches: o.reducedMotion === true, media: q }; }
+  };
+  if (o.storage !== false) win.localStorage = store;
+  const sandbox = {
+    document: { getElementById: el },
+    window: win,
+    setTimeout: timers.setTimeoutFn,
+    clearTimeout: timers.clearTimeoutFn
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(inline, sandbox);
+  return { els, handlers, writes, timers };
+}
+
+function c15Post(ctx, msg) {
+  (ctx.handlers.storage || []).forEach((fn) => fn({ key: 'music-bingo-dj-on', newValue: JSON.stringify(msg) }));
+}
+
+function c15SpinningMsg(pool) {
+  return {
+    type: 'state', phase: 'spinning', songs: [],
+    history: [{ n: 1, title: 'Vieja Confirmada', artist: 'Artista A', status: 'played', time: '20:00:01' }],
+    current: null, scrollPool: pool, total: 3, remaining: 2, drawn: 1
+  };
+}
+
+function c15RevealMsg() {
+  return {
+    type: 'state', phase: 'reveal', songs: [],
+    history: [
+      { n: 1, title: 'Vieja Confirmada', artist: 'Artista A', status: 'played', time: '20:00:01' },
+      { n: 2, title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn', time: '20:00:02' }
+    ],
+    current: { id: 'c15-drawn', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn' },
+    total: 3, remaining: 2, drawn: 1
+  };
+}
+
+describe('c-15 4.1: public ticker renderer (RED)', () => {
+  it('spinning with scrollPool paints the first remaining entry, never the drawn title', () => {
+    const ctx = c15BootPublic(null);
+    c15Post(ctx, c15SpinningMsg([
+      { id: 'r1', title: 'Gasolina', artist: 'Daddy Yankee' },
+      { id: 'r2', title: 'Levitating', artist: 'Dua Lipa' }
+    ]));
+    assert.ok(ctx.els.waiting.textContent.includes('Gasolina'), 'first scrolled entry, got: ' + ctx.els.waiting.textContent);
+    assert.ok(!ctx.els.waiting.textContent.includes('Matador'), 'drawn title never teased');
+    assert.equal(ctx.els.result.style.display, 'none', 'result stays hidden during the scroll');
+  });
+
+  it('the ticker advances one entry per step and wraps', () => {
+    const ctx = c15BootPublic(null);
+    c15Post(ctx, c15SpinningMsg([
+      { id: 'r1', title: 'Gasolina', artist: 'Daddy Yankee' },
+      { id: 'r2', title: 'Levitating', artist: 'Dua Lipa' }
+    ]));
+    assert.ok(ctx.timers.pending.size > 0, 'a step is scheduled');
+    ctx.timers.fireOne();
+    assert.ok(ctx.els.waiting.textContent.includes('Levitating'), 'second entry, got: ' + ctx.els.waiting.textContent);
+    ctx.timers.fireOne();
+    assert.ok(ctx.els.waiting.textContent.includes('Gasolina'), 'wraps to first, got: ' + ctx.els.waiting.textContent);
+  });
+
+  it('the scheduled step waits SCROLL_STEP_MS (±30 ms), independent of the reveal buffer', () => {
+    const pub = require(path.join(root, 'js', 'public.js'));
+    const app = require(path.join(root, 'js', 'app.js'));
+    const ctx = c15BootPublic(null);
+    c15Post(ctx, c15SpinningMsg([
+      { id: 'r1', title: 'Gasolina', artist: 'Daddy Yankee' },
+      { id: 'r2', title: 'Levitating', artist: 'Dua Lipa' }
+    ]));
+    assert.ok(ctx.timers.pending.size > 0, 'a step is scheduled');
+    for (const entry of ctx.timers.pending.values()) {
+      assert.ok(Math.abs(entry.ms - pub.SCROLL_STEP_MS) <= 30,
+        'step ' + entry.ms + ' ms within ±30 ms of SCROLL_STEP_MS=' + pub.SCROLL_STEP_MS);
+    }
+    assert.equal(app.REVEAL_DELAY_MS, 5000, 'total buffer intact');
+    assert.ok(pub.SCROLL_STEP_MS < app.REVEAL_DELAY_MS, 'step and buffer are separate timings');
+  });
+
+  it('re-broadcast of the same commit continues the ticker instead of restarting it', () => {
+    const ctx = c15BootPublic(null);
+    const msg = c15SpinningMsg([{ id: 'r1', title: 'Gasolina', artist: 'Y' }, { id: 'r2', title: 'Levitating', artist: 'Z' }]);
+    c15Post(ctx, msg);
+    ctx.timers.fireOne(); // now on Levitating
+    assert.ok(ctx.els.waiting.textContent.includes('Levitating'));
+    // Act: the DJ re-broadcasts the identical envelope (deduped by renderKey)
+    c15Post(ctx, JSON.parse(JSON.stringify(msg)));
+    ctx.timers.fireOne();
+    // Assert: the session continued (wrap) instead of restarting at Gasolina
+    assert.ok(ctx.els.waiting.textContent.includes('Gasolina'), 'continued, got: ' + ctx.els.waiting.textContent);
+  });
+
+  it('reveal stops the scroll and paints the real title', () => {
+    const ctx = c15BootPublic(null);
+    c15Post(ctx, c15SpinningMsg([{ id: 'r1', title: 'Gasolina', artist: 'Y' }]));
+    assert.ok(ctx.timers.pending.size > 0, 'scroll running');
+    c15Post(ctx, c15RevealMsg());
+    assert.equal(ctx.els.title.textContent, 'Matador');
+    assert.equal(ctx.els.artist.textContent, 'Los Fabulosos Cadillacs');
+    assert.equal(ctx.els.result.style.display, 'block');
+    assert.equal(ctx.timers.pending.size, 0, 'no scroll step survives the reveal');
+    assert.ok(!ctx.timers.fireOne(), 'no step fires post-reveal');
+    assert.equal(ctx.els.title.textContent, 'Matador', 'no stale title ever renders');
+  });
+
+  it('empty pool degrades to the neutral waiting text with no title and no timer', () => {
+    const ctx = c15BootPublic(null);
+    c15Post(ctx, c15SpinningMsg([]));
+    assert.equal(ctx.els.waiting.textContent, 'Buscando el tema en cabina…');
+    assert.equal((ctx.els.title && ctx.els.title.textContent) || '', '', 'no title on empty pool');
+    assert.equal(ctx.timers.pending.size, 0, 'no step scheduled on empty pool');
+  });
+
+  it('reduced motion shows the static neutral text with no timer', () => {
+    const ctx = c15BootPublic(null, { reducedMotion: true });
+    c15Post(ctx, c15SpinningMsg([{ id: 'r1', title: 'Gasolina', artist: 'Y' }]));
+    assert.equal(ctx.els.waiting.textContent, 'Buscando el tema en cabina…');
+    assert.equal((ctx.els.title && ctx.els.title.textContent) || '', '', 'no title under reduced motion');
+    assert.equal(ctx.timers.pending.size, 0, 'no animation scheduled under reduced motion');
+  });
+
+  it('markup in scrolled entries renders inert (no script execution surface)', () => {
+    const ctx = c15BootPublic(null);
+    const evil = "<script>alert('x')</scr" + 'ipt>';
+    c15Post(ctx, c15SpinningMsg([{ id: 'r1', title: evil, artist: evil }]));
+    assert.equal(ctx.els.waiting.textContent, evil + ' — ' + evil, 'literal text preserved');
+  });
+});
+
+// ---- c-15 5.1: buffer guards + single reveal owner (RED) ----
+describe('c-15 5.1: buffer guards + single reveal owner (RED)', () => {
+  let core;
+  let draw;
+  let app;
+
+  beforeEach(() => {
+    core = require(path.join(root, 'js', 'core.js'));
+    draw = require(path.join(root, 'js', 'draw.js'));
+    app = require(path.join(root, 'js', 'app.js'));
+    freshState(core);
+  });
+
+  afterEach(() => {
+    if (typeof app.resetPublicTimerFns === 'function') app.resetPublicTimerFns();
+    if (typeof app.cancelPublicReveal === 'function') app.cancelPublicReveal();
+    resetState(core);
+  });
+
+  it('void request mid-buffer refuses before the prompt (no modal, no mutation)', () => {
+    draw.pickAndCommit(0);
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    app.schedulePublicReveal(() => {});
+    let prompts = 0;
+    const res = app.handleVoidRequest(() => { prompts++; return 'X'; }, () => true);
+    assert.equal(res, false);
+    assert.equal(prompts, 0, 'prompt never fires mid-buffer');
+    assert.equal(core.state.current.status, 'drawn');
+    assert.equal(core.state.history[0].status, 'drawn');
+    assert.ok(!('motivo' in core.state.history[0]), 'no motivo written mid-buffer');
+  });
+
+  it('played + void confirm enabled at reveal (post-buffer)', () => {
+    draw.pickAndCommit(0);
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    let reveals = 0;
+    app.schedulePublicReveal(() => { reveals++; });
+    assert.equal(app.isPublicBuffer(), true);
+    fake.fireAll();
+    assert.equal(reveals, 1);
+    assert.equal(app.isPublicBuffer(), false);
+    // played path
+    app.setCurrentStatus('played');
+    assert.equal(core.state.current, null);
+    assert.equal(core.state.history[0].status, 'played');
+  });
+
+  it('void with motivo enabled at reveal (post-buffer)', () => {
+    draw.pickAndCommit(0);
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    app.schedulePublicReveal(() => {});
+    fake.fireAll();
+    const res = app.handleVoidRequest(() => 'Archivo dañado', () => true);
+    assert.equal(res, true);
+    assert.equal(core.state.current, null);
+    assert.equal(core.state.history[0].status, 'void');
+    assert.equal(core.state.history[0].motivo, 'Archivo dañado');
+  });
+
+  it('single owner: re-scheduling mid-buffer replaces (at most one reveal per commit)', () => {
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    let first = 0;
+    let second = 0;
+    app.schedulePublicReveal(() => { first++; });
+    app.schedulePublicReveal(() => { second++; });
+    fake.fireAll();
+    assert.equal(first, 0, 'first schedule cancelled by the second');
+    assert.equal(second, 1, 'exactly one reveal fires');
+  });
+
+  it('clear mid-buffer cancels the reveal: no ghost, no stale title', () => {
+    draw.pickAndCommit(0);
+    core.state.locked = false;
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    let reveals = 0;
+    app.schedulePublicReveal(() => { reveals++; });
+    app.handleClearSongs();
+    fake.fireAll();
+    assert.equal(reveals, 0, 'cancelled buffer never fires');
+    assert.equal(core.state.songs.length, 0);
+    assert.equal(core.state.current, null);
+    assert.equal(core.state.history.length, 0);
+  });
+
+  it('reset mid-buffer cancels the reveal: board stays reset', () => {
+    draw.pickAndCommit(0);
+    core.state.locked = false;
+    const fake = makeFakeTimers();
+    app.setPublicTimerFns(fake);
+    let reveals = 0;
+    app.schedulePublicReveal(() => { reveals++; });
+    app.handleResetAll();
+    fake.fireAll();
+    assert.equal(reveals, 0, 'cancelled buffer never fires');
+    assert.equal(core.state.songs.length, 0);
+    assert.equal(core.state.history.length, 0);
+    assert.equal(core.state.current, null);
+  });
+
+  it('no spinning term remains in button predicates or guards (isPublicBuffer only)', () => {
+    const fs = require('node:fs');
+    const code = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert.ok(!/st\.spinning/.test(code), 'no st.spinning term in app.js');
+    assert.ok(!/SPIN_MS|scheduleReveal\(|cancelReveal\(|isRevealing\(|finishCommit/.test(code), 'no operator timer refs in app.js');
+    assert.ok(/isPublicBuffer\(\)/.test(code), 'buffer predicate owns the guards');
   });
 });
 

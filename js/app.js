@@ -165,7 +165,7 @@
     var av = c.available();
     // C-08 public-screen: phased envelope. `spinning` withholds the committed
     // title BY CONSTRUCTION (current:null on the wire) so the projector never
-    // spoils during the operator spin + 3 s VirtualDJ cue buffer. Any other
+    // spoils during the 5 s VirtualDJ cue buffer. Any other
     // phase (incl. legacy no-arg callers) carries current as before.
     var ph = (typeof phase === 'string' && phase) ? phase : 'idle';
     // C-08 spoiler closure: the committed title lives in three places
@@ -175,12 +175,20 @@
     var outSongs = st.songs;
     var outHistory = st.history;
     var outCurrent = null;
+    // C-15 word-scroll: transient wire-only snapshot of the REMAINING pool
+    // for the public ticker. Built from available() AFTER the commit, so the
+    // drawn song already left the pool — exclusion is structural (by id),
+    // never sent to mbdj.v1. Empty when the draw exhausts the catalog.
+    var scrollPool = null;
     if (ph === 'spinning') {
       outSongs = st.songs.map(function (s) {
         if (s.status !== 'drawn') return s;
         return { id: s.id, title: '', artist: '', status: s.status, addedAt: s.addedAt };
       });
       outHistory = st.history.filter(function (h) { return h.status !== 'drawn'; });
+      scrollPool = av.map(function (s) {
+        return { id: s.id, title: s.title, artist: s.artist };
+      });
     } else if (st.current) {
       // C-08: id included so the projector can dedupe off (phase, current.id).
       outCurrent = { id: st.current.id, title: st.current.title, artist: st.current.artist, status: st.current.status };
@@ -191,6 +199,7 @@
       songs: outSongs,
       history: outHistory,
       current: outCurrent,
+      scrollPool: scrollPool,
       total: st.songs.length,
       remaining: av.length,
       drawn: st.songs.filter(function (s) { return s.status !== 'available'; }).length
@@ -224,13 +233,13 @@
     }
   }
 
-  // C-08 public-screen: named public reveal delay (ms), independent of the
-  // C-03 spin base (SPIN_MS=2750 in draw.js). NEVER merge one into the other:
-  // retuning here moves only the projector reveal, never commit nor spin.
-  var REVEAL_DELAY_MS = 3000;
+  // C-15 public-screen: named public reveal delay (ms). The retired C-03
+  // operator spin base is gone — this constant owns the only timed window.
+  // Retuning here moves only the projector reveal, never the commit.
+  var REVEAL_DELAY_MS = 5000;
 
-  // C-08 buffer timer owned by app.js (spin timer stays in draw.js), reusing
-  // the draw.js injectable-timer pattern so tests drive both deterministically.
+  // C-08 buffer timer owned by app.js, reusing the injectable-timer pattern
+  // so tests drive it deterministically.
   var publicRevealTimer = null;
   var publicTimerFns = null;
 
@@ -257,7 +266,7 @@
     return publicRevealTimer;
   }
 
-  // Idempotent; clears the buffer handle only — `spinning` resets via finishCommit.
+  // Idempotent; clears the buffer handle only.
   function cancelPublicReveal() {
     if (publicRevealTimer === null || publicRevealTimer === undefined) return false;
     var id = publicRevealTimer;
@@ -279,7 +288,7 @@
     if (!phase) {
       var c = core();
       var st = c.state;
-      phase = (st.spinning || isPublicBuffer()) ? 'spinning' : (st.current ? 'reveal' : 'idle');
+      phase = isPublicBuffer() ? 'spinning' : (st.current ? 'reveal' : 'idle');
     }
     var msg = buildStateMessage(phase);
     if (channel) {
@@ -298,10 +307,10 @@
     $('totalStat').textContent = counters.total;
     $('remainingStat').textContent = counters.available;
     $('drawnStat').textContent = counters.drawn;
-    // C-08: draw/confirm stay disabled through the spin AND the 3 s public
-    // buffer — isPublicBuffer() OR-ed with spinning (single predicate).
-    $('drawBtn').disabled = !av.length || st.spinning || isPublicBuffer();
-    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || st.spinning || isPublicBuffer();
+    // C-15: draw/confirm stay disabled through the 5 s public buffer —
+    // isPublicBuffer() is the single predicate (no operator spin remains).
+    $('drawBtn').disabled = !av.length || isPublicBuffer();
+    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || isPublicBuffer();
     // C-11 session-lock: every mutation control stands down while locked
     // (import/file/edit/clear/reset) and the admin unlock arms itself ONLY
     // while locked. Single isImportBlocked() predicate — one funnel, no drift.
@@ -365,10 +374,9 @@
   function setCurrentStatus(status, motivo) {
     var c = core();
     var st = c.state;
-    // C-03 draw-engine spinning guard + C-08 public-buffer guard: confirm
-    // blocked mid-spin AND mid-buffer, no effect until the public reveal
-    // completes (C-09 confirm gates on this: sin giro ni buffer pendiente).
-    if (st.spinning || isPublicBuffer()) return;
+    // C-15 public-buffer guard: confirm blocked mid-buffer, no effect until
+    // the public reveal completes (C-09 confirm gates on this: sin buffer pendiente).
+    if (isPublicBuffer()) return;
     if (!st.current || st.current.status !== 'drawn') return;
     st.current.status = status;
     var h = null;
@@ -400,13 +408,13 @@
 
   // C-09 confirm-void: injectable void seam (prompt/confirm are boundaries —
   // tests pass mocks, the click handler passes the real modals). Gate order:
-  // current/drawn → spinning/buffer → prompt → empty-check → confirm.
+  // current/drawn → buffer → prompt → empty-check → confirm.
   // Returns true only when the void commits; false leaves state untouched.
   function handleVoidRequest(promptFn, confirmFn) {
     var c = core();
     var st = c.state;
     if (!st.current || st.current.status !== 'drawn') return false;
-    if (st.spinning || isPublicBuffer()) return false;
+    if (isPublicBuffer()) return false;
     var pf = (typeof promptFn === 'function') ? promptFn
       : (typeof prompt !== 'undefined' ? function (m) { return prompt(m); } : null);
     if (!pf) return false;
@@ -517,7 +525,10 @@
     return text;
   }
 
-  // Secure draw UI flow: commit via draw.pickAndCommit() BEFORE animation.
+  // Secure draw UI flow: commit via draw.pickAndCommit() BEFORE paint.
+  // C-15 instant result: the dashboard shows title+artist+copy the instant
+  // the commit lands — no operator wheel animation, no operator-side timer.
+  // The only pending window is the 5 s public buffer (REVEAL_DELAY_MS).
   function handleDrawClick() {
     // C-08 buffer guard first (Node-testable): mid-buffer draws are no-ops
     // even before reaching the DOM path below.
@@ -525,43 +536,31 @@
     if (typeof document === 'undefined') return null;
     var c = core();
     var st = c.state;
-    if (st.spinning || isPublicBuffer() || !c.available().length) return null;
+    if (isPublicBuffer() || !c.available().length) return null;
     // Commit-before-render (RN-SOR-02): the song is decided + persisted here;
-    // the reveal callback below only renders via finishCommit() + render().
+    // the paint below only renders the committed song (never decides).
     var s = drawm().pickAndCommit();
     if (!s) return null;
     var $ = function (id) { return document.getElementById(id); };
-    $('result').classList.remove('show');
+    // Instant dashboard result: title + artist + copy available at once.
     $('wheel').classList.remove('spin');
-    void $('wheel').offsetWidth;
-    $('wheel').classList.add('spin');
-    $('wheelText').textContent = 'SORTEANDO';
-    $('wheelSub').textContent = 'Buena suerte';
-    $('drawHeading').textContent = 'La ruleta está girando…';
-    $('drawDesc').textContent = 'El resultado ya fue elegido al azar. Prepará VirtualDJ.';
+    $('wheelText').textContent = s.title.length > 19 ? s.title.slice(0, 17) + '…' : s.title;
+    $('wheelSub').textContent = s.artist || 'Tema sorteado';
+    $('drawHeading').textContent = '¡Esta es la canción!';
+    $('drawDesc').textContent = 'Buscala en VirtualDJ y reproducila. Cuando termine de sonar, marcala como reproducida.';
+    $('resultTitle').textContent = s.title;
+    $('resultArtist').textContent = s.artist || 'Artista no especificado';
+    $('result').classList.add('show');
     $('drawBtn').disabled = true;
     $('confirmBtn').disabled = true;
-    // C-08: commit-time envelope is title-free on both screens (wheels spin).
+    // C-08: commit-time envelope is title-free on the public screen while the
+    // operator already reads the title to cue VirtualDJ manual — hence
+    // `spinning`, never `reveal`, on this broadcast.
     broadcast('spinning');
-    // C-03 draw-engine: cancellable reveal owned by draw.js (SPIN_MS base only).
-    drawm().scheduleReveal(function () {
-      drawm().finishCommit();
-      $('wheel').classList.remove('spin');
-      $('wheelText').textContent = s.title.length > 19 ? s.title.slice(0, 17) + '…' : s.title;
-      $('wheelSub').textContent = s.artist || 'Tema sorteado';
-      $('drawHeading').textContent = '¡Esta es la canción!';
-      $('drawDesc').textContent = 'Buscala en VirtualDJ y reproducila. Cuando termine de sonar, marcala como reproducida.';
-      $('resultTitle').textContent = s.title;
-      $('resultArtist').textContent = s.artist || 'Artista no especificado';
-      $('result').classList.add('show');
-      // C-08 asymmetric reveal (intentional): the operator reads the title NOW
-      // to cue VirtualDJ manual; the projector keeps the cabin message until
-      // the buffer elapses — hence `spinning`, never `reveal`, on this broadcast.
-      broadcast('spinning');
-      schedulePublicReveal(function () {
-        broadcast('reveal');
-        render();
-      });
+    // C-15: single pending owner is the public buffer (no operator reveal).
+    schedulePublicReveal(function () {
+      broadcast('reveal');
+      render();
     });
     return s;
   }
@@ -754,15 +753,12 @@
   // (mid-partida list is immutable; unlock is the C-11 admin path). Refusal is
   // total: no confirm modal, no timer cancel, no state mutation.
   function handleClearSongs() {
-    var d = drawm();
     if (isImportBlocked()) {
       setImportMessage(BLOCKED_MESSAGE);
       return false;
     }
     if (typeof document === 'undefined') {
-      d.cancelReveal();
       cancelPublicReveal();
-      d.finishCommit();
       var c0 = core();
       c0.state.songs = [];
       c0.state.history = [];
@@ -772,11 +768,9 @@
     var c = core();
     if (!confirm('¿Vaciar el listado de canciones? Esta acción no se puede deshacer.')) return false;
     if (c.state.history.length && !confirm('Ya hay historial. ¿Querés borrar también el historial y reiniciar la partida?')) return false;
-    // C-08: cancel BOTH the spin timer and the pending public reveal so no
-    // ghost result resurrects cleared state (mid-spin or mid-buffer alike).
-    d.cancelReveal();
+    // C-15: cancel the pending public buffer so no ghost result resurrects
+    // cleared state (mid-buffer alike). No operator timer remains.
     cancelPublicReveal();
-    d.finishCommit();
     c.state.songs = [];
     c.state.history = [];
     c.state.current = null;
@@ -791,15 +785,12 @@
   }
 
   function handleResetAll() {
-    var d = drawm();
     if (isImportBlocked()) {
       setImportMessage(BLOCKED_MESSAGE);
       return false;
     }
     if (typeof document === 'undefined') {
-      d.cancelReveal();
       cancelPublicReveal();
-      d.finishCommit();
       var c0 = core();
       c0.state.songs = [];
       c0.state.history = [];
@@ -808,9 +799,7 @@
     }
     var c = core();
     if (!confirm('¿Reiniciar toda la partida? Se borrarán canciones cargadas, sorteos e historial. Exportá el historial primero si lo necesitás.')) return false;
-    d.cancelReveal();
     cancelPublicReveal();
-    d.finishCommit();
     c.state.songs = [];
     c.state.history = [];
     c.state.current = null;
