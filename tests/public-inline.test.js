@@ -133,6 +133,24 @@ describe('nivel2: el inline de la publica parsea y pinta si el mensaje llega', (
     assert.equal(file, built);
   });
 
+  it('c-14 paridad: public.html y builder llevan tokens + zonas La Pepa', () => {
+    // Arrange
+    const pub = require(path.join(root, 'js', 'public.js'));
+    // Act
+    const built = pub.buildPublicHTML();
+    const file = fs.readFileSync(path.join(root, 'public.html'), 'utf8');
+    // Assert: paridad exacta + identidad (literales independientes de design decision 1/3)
+    assert.equal(file, built);
+    for (const token of ['--pepa-red', '--pepa-cream', '--pepa-gold', '--pepa-ink']) {
+      assert.ok(built.includes(token), 'builder lleva ' + token);
+      assert.ok(file.includes(token), 'public.html lleva ' + token);
+    }
+    for (const cls of ['pepa-frame', 'pepa-logo', 'pepa-stage', 'pepa-vinyl', 'pepa-cover']) {
+      assert.ok(built.includes(cls), 'builder lleva .' + cls);
+      assert.ok(file.includes(cls), 'public.html lleva .' + cls);
+    }
+  });
+
   it('monolito referencia: sin patron [c) roto y todo inline parsea', () => {
     // Arrange: el monolito retenido como referencia tenia el MISMO typo en
     // su publicHTML() de popup (document.write) — el panel DJ andaba pero el

@@ -856,3 +856,52 @@ describe('c-08 4.1: double-screen sync DJ -> publica (portable two-harness E2E)'
     assert.equal(core.state.history.length, 1, 'single history entry per draw');
   });
 });
+
+// ---- c-14 1.1: La Pepa visual identity seams (TDD RED -> GREEN) ----
+// Tokens + layout classes must exist in buildPublicHTML(); state IDs preserved.
+// Expected values are independent literals from specs/public-screen (C-14),
+// never recomputed from the implementation.
+describe('c-14 1.1: La Pepa identity tokens + layout (RED)', () => {
+  let pub;
+
+  beforeEach(() => {
+    pub = require(path.join(root, 'js', 'public.js'));
+  });
+
+  it('buildPublicHTML carries the --pepa-* token set inline (standalone file://)', () => {
+    // Arrange + Act
+    const html = pub.buildPublicHTML();
+    // Assert: named tokens from design decision 1 (independent literals)
+    assert.ok(html.includes('--pepa-red'), 'token --pepa-red present');
+    assert.ok(html.includes('--pepa-cream'), 'token --pepa-cream present');
+    assert.ok(html.includes('--pepa-gold'), 'token --pepa-gold present');
+    assert.ok(html.includes('--pepa-ink'), 'token --pepa-ink present');
+  });
+
+  it('layout exposes .pepa-frame/.pepa-logo/.pepa-stage/.pepa-vinyl zones', () => {
+    // Arrange + Act
+    const html = pub.buildPublicHTML();
+    // Assert
+    assert.ok(html.includes('pepa-frame'), '.pepa-frame zone present');
+    assert.ok(html.includes('pepa-logo'), '.pepa-logo zone present');
+    assert.ok(html.includes('pepa-stage'), '.pepa-stage zone present');
+    assert.ok(html.includes('pepa-vinyl'), '.pepa-vinyl present (CSS puro, sin assets)');
+  });
+
+  it('state IDs #title/#artist/#history/#count/#status/#waiting/#result preserved', () => {
+    // Arrange + Act
+    const html = pub.buildPublicHTML();
+    // Assert: C-08 DOM contract untouched (same ids the listeners use)
+    for (const id of ['title', 'artist', 'history', 'count', 'status', 'waiting', 'result']) {
+      assert.ok(html.includes('id="' + id + '"'), 'id="' + id + '" preserved');
+    }
+  });
+
+  it('cover zone exposes .pepa-cover with data-cover-for seam (OPCION A + seam B)', () => {
+    // Arrange + Act
+    const html = pub.buildPublicHTML();
+    // Assert: generative placeholder today; convention assets/covers/<id>.jpg documented for B
+    assert.ok(html.includes('pepa-cover'), '.pepa-cover zone present');
+    assert.ok(html.includes('data-cover-for'), 'data-cover-for seam present');
+  });
+});

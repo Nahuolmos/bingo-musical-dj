@@ -267,6 +267,39 @@
     new Function(code); // solo parsea, no ejecuta: lanza si el bloque esta roto
     assert(html3.indexOf('[c]))}') !== -1, 'esc con corchete cerrado');
   });
+  check('publica La Pepa (c-14: tokens + zonas + ids preservados)', function () {
+    var html4 = MBDJ.public.buildPublicHTML();
+    assert(html4.indexOf('--pepa-red') !== -1, 'token --pepa-red');
+    assert(html4.indexOf('--pepa-cream') !== -1, 'token --pepa-cream');
+    assert(html4.indexOf('--pepa-gold') !== -1, 'token --pepa-gold');
+    assert(html4.indexOf('--pepa-ink') !== -1, 'token --pepa-ink');
+    assert(html4.indexOf('pepa-frame') !== -1, '.pepa-frame');
+    assert(html4.indexOf('pepa-logo') !== -1, '.pepa-logo');
+    assert(html4.indexOf('pepa-stage') !== -1, '.pepa-stage');
+    assert(html4.indexOf('pepa-vinyl') !== -1, '.pepa-vinyl');
+    assert(html4.indexOf('pepa-cover') !== -1, '.pepa-cover');
+    var ids = ['title', 'artist', 'history', 'count', 'status', 'waiting', 'result'];
+    for (var i = 0; i < ids.length; i++) {
+      assert(html4.indexOf('id="' + ids[i] + '"') !== -1, 'id=' + ids[i]);
+    }
+    assert(html4.indexOf('prefers-reduced-motion') !== -1, 'reduced-motion');
+    assert(html4.indexOf('logo-la-pepa-crema.svg') !== -1, 'logo crema');
+    assert(html4.indexOf('BODEG') !== -1, 'fallback texto');
+  });
+  check('caratula OPCION A + seam B (c-14: coverFor deterministico)', function () {
+    assert(typeof MBDJ.public.coverFor === 'function', 'coverFor seam');
+    var a = MBDJ.public.coverFor({ id: 'c14-s1', title: 'Matador' });
+    var b = MBDJ.public.coverFor({ id: 'c14-s1', title: 'Matador' });
+    assert(a.kind === 'placeholder', 'kind placeholder');
+    assert(a.initial === 'M', 'inicial M mirror');
+    assert(a.background === b.background, 'determinismo mirror');
+    var c = MBDJ.public.coverFor({ id: 'c14-s2', title: 'Gasolina' });
+    assert(c.initial === 'G', 'inicial G mirror');
+    assert(a.background !== c.background, 'triangulacion mirror');
+    var n = MBDJ.public.coverFor(null);
+    assert(n.kind === 'placeholder' && n.initial === '?', 'fallback mirror');
+    assert(n.background.indexOf('hsl(') === 0, 'hsl inline mirror');
+  });
 
   var el = document.getElementById('results');
   var pass = out.filter(function (r) { return r.ok; }).length;

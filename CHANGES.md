@@ -332,7 +332,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 > No entra en el evento de dos días. Proponer solo con v1 show-ready (C-11 ✓). Ningún change promete control automático de VirtualDJ en v1 (DD-01). El delay de 3 s de C-08 es pausa manual, no integración.
 
 ### [C-12] `backlog-cards-stats-theming`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` descartado (2026-10-14, reemplazado por C-14 `public-visual-la-pepa` como foco post-v1)
 - **Scope**: Backlog de experiencia: cartones + estadísticas + theming (opcionales de discovery §6)
   - Generar/imprimir cartones propios desde la app (combinaciones únicas, PDF imprimible) — diferencial vs. Sacodejuegos/Bingo Maker.
   - Estadísticas del evento: temas cantados, duración (2 días), anulaciones con motivo + desbloqueos (fuente: C-10).
@@ -350,7 +350,7 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 ---
 
 ### [C-13] `backlog-virtualdj-spike`
-- **Estado**: `[ ]` pendiente
+- **Estado**: `[x]` descartado (2026-10-14, reemplazado por C-14 `public-visual-la-pepa` como foco post-v1)
 - **Scope**: Spike documentado de integración futura VirtualDJ — sin automatizar en v1 (DD-01, pregunta abierta)
   - Investigar formato exacto: ¿mostrar el tema sorteado en VDJ vs. disparar reproducción? (pregunta abierta discovery §11). El buffer de 3 s de C-08 es el baseline manual a superar.
   - Prototipo aislado fuera de la ruta del show (no toca C-07/C-08); el panel v1 sigue con reproducción manual + "Copiar título y artista".
@@ -362,6 +362,22 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
   - `knowledge-base/05_reglas_de_negocio.md` §RN-X-02
   - `knowledge-base/07_flujos_principales.md` §Flujo 2
   - `knowledge-base/09_decisiones_y_supuestos.md` §DD-01
+  - `knowledge-base/10_preguntas_abiertas.md` §Preguntas abiertas
+
+---
+
+### [C-14] `public-visual-la-pepa`
+- **Estado**: `[x]` completado (2026-10-15, archivado en `openspec/changes/archive/2026-10-15-c-14-public-visual-la-pepa/`, spec `openspec/specs/public-screen/spec.md` 6 C-08 + 4 C-14 = 10 requirements, tests 268/268 green — public 34/34 C-08 intactos, validate `--strict` limpio; aprobación explícita del operador 2026-10-15 "Quedó, archivamos" con screenshot reveal 16:9)
+- **Scope**: Reskin post-v1 de la pública con identidad Bodegón La Pepa — reemplaza a C-12/C-13 como foco post-v1 (ambos ya descartados). Solo `public.html` + espejo `buildPublicHTML()` en `js/public.js` (paridad verbatim test-guardeada); cero cambios de lógica (timers, fases, broadcast, store, panel intactos; `css/styles.css` intacto — estilo pública inline por diseño standalone).
+  - Identidad: fondo rojo pleno `--pepa-red #B91C1C`, marco/texto crema `--pepa-cream #F3EAD8` (contraste 5.41:1 ≥ 4.5:1), oro `--pepa-gold #E8B04B` solo no-textual, tinta `--pepa-ink #2B1210`; logo PNG arriba-izquierda `absolute` + fallback texto; vinilo CSS + carátula centro (sleeve-over-vinyl, gira solo el disco vía `.pepa-grooves`, respeta `prefers-reduced-motion`); título/artista/pills crema abajo; tipografía sistema-first (condensado bold 900 + micro-acento manuscrito), cero CDN (`grep http` vacío, `file://` offline).
+  - 5 rondas de fixes del operador post-screenshot (detalle en `archive-note.md`): v1 fit-viewport/overlap/giro-disco/logo-glitch → v2 textos-XL/disco-limpio/centro/PNG → v3 logo-top-left/título-XXL-sin-scroll → v4 frame-full-height/buffer-fuera-del-disco → v5 sin-eyebrow/textos-máximos-en-100vh. Tests `tests/public-visual-fixes.test.js` §1–§11 + `tests/public-cover.test.js` (`coverFor`), todo ROJO→VERDE.
+  - Gates manuales §4.1/§4.2/§5.6/§7.4/§8.4/§9.4 cerrados por aprobación del operador (screenshot reveal 16:9: Billie Jean / Michael Jackson, layout lleno, logo top-left, disco limpio, sin eyebrow; PNG no versionados).
+  - Tests: suite 268/268 VERDE; contratos C-08 intactos (2 fases, `REVEAL_DELAY_MS=3000`, sin spoiler, sin controles, contador + últimas 5).
+- **Dependencias**: C-08 (contratos preservados), C-11 (v1 show-ready previo)
+- **Governance**: MEDIO
+- **Leer antes**:
+  - `knowledge-base/05_reglas_de_negocio.md` §Dominio: Pantalla pública (RN-PUB)
+  - `knowledge-base/06_funcionalidades.md` §US-006, §US-008
   - `knowledge-base/10_preguntas_abiertas.md` §Preguntas abiertas
 
 ---
