@@ -158,6 +158,65 @@
   var COVER_TIMEOUT_MS = 12000;
   var ITUNES_LIMIT = 8;
   var COVER_RETRIES = 1;
+  var COVER_CACHE_KEY_SEP = ' - ';
+  var DEEZER_SEARCH_URL = 'https://api.deezer.com/search';
+  var DEEZER_LIMIT = 10;
+  var CORS_PROXY_URL = 'https://api.allorigins.win/raw?url=';
+
+  // C-18: cache key normalizada para coverCache (misma normalización que dedupe).
+  function coverCacheKey(song) {
+    var a = normCoverStr(song.artist || '');
+    var t = normCoverStr(song.title || '');
+    var k = (a + COVER_CACHE_KEY_SEP + t).replace(/\s+/g, ' ').trim();
+    return k;
+  }
+
+  // C-18: pick de carátula de álbum desde resultados de búsqueda entity=album.
+  // Busca primero álbum cuyo collectionName contenga palabras del título;
+  // luego primer álbum del mismo artista; luego primer resultado cualquiera.
+  function pickAlbumCoverResult(results, song) {
+    if (!Array.isArray(results) || !results.length) return null;
+    var wt = normCoverStr(song.title);
+    var wa = normCoverStr(song.artist);
+    var i, r, cn, ra;
+    for (i = 0; i < results.length; i++) {
+      r = results[i] || {};
+      cn = normCoverStr(r.collectionName || '');
+      ra = normCoverStr(r.artistName || '');
+      if (cn && (cn.indexOf(wt) !== -1 || wt.indexOf(cn) !== -1) && artistMatches(ra, wa)) return r;
+    }
+    for (i = 0; i < results.length; i++) {
+      r = results[i] || {};
+      ra = normCoverStr(r.artistName || '');
+      if (artistMatches(ra, wa)) return r;
+    }
+    return results[0];
+  }
+
+  // C-19: pick de resultado de Deezer search (type=track). Match exacto-insensible
+  // por título + artist.name; tier relajado con baseCoverStr; fallback primero.
+  function pickDeezerResult(results, song) {
+    if (!Array.isArray(results) || !results.length) return null;
+    var wt = normCoverStr(song.title);
+    var wa = normCoverStr(song.artist);
+    var i, r, rt, ra;
+    for (i = 0; i < results.length; i++) {
+      r = results[i] || {};
+      rt = normCoverStr(r.title || '');
+      ra = normCoverStr((r.artist && r.artist.name) || '');
+      if (wt && rt === wt && artistMatches(ra, wa)) return r;
+    }
+    var wb = baseCoverStr(song.title);
+    if (wb) {
+      for (i = 0; i < results.length; i++) {
+        r = results[i] || {};
+        rt = baseCoverStr(r.title || '');
+        ra = normCoverStr((r.artist && r.artist.name) || '');
+        if (rt === wb && artistMatches(ra, wa)) return r;
+      }
+    }
+    return results[0];
+  }
 
   function normCoverStr(s) {
     return String(s == null ? '' : s).replace(/[‘’‚‛′‵`´']/g, "'").replace(/[“”„‟"]/g, '"').toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
@@ -263,31 +322,161 @@
     });
   }
 
+  // C-19: intento único a Deezer search (type=track). Igual patrón que
+  // singleCoverAttempt pero parseando respuesta de Deezer:
+  // data[].album.cover_big (o cover_medium) como carátula.
+  function singleDeezerAttempt(song, fetchFn, url, timeoutMs) {
+    var controller = null;
+    var signal;
+    try {
+      if (typeof AbortController !== 'undefined') { controller = new AbortController(); signal = controller.signal; }
+    } catch (e) { controller = null; }
+    var fetchP;
+    try {
+      fetchP = fetchFn(url, signal ? { signal: signal } : undefined);
+    } catch (e) {
+      return Promise.resolve({ kind: 'transient' });
+    }
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        try { if (controller && controller.abort) controller.abort(); } catch (e) {}
+        resolve({ kind: 'transient' });
+      }, timeoutMs);
+      Promise.resolve(fetchP).then(function (res) {
+        if (done) return;
+        if (!res || res.ok === false) { done = true; clearTimeout(timer); resolve({ kind: 'transient' }); return; }
+        return Promise.resolve().then(function () { return res.json(); }).then(function (data) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          var pick = pickDeezerResult(data && data.data, song);
+          if (!pick) { resolve({ kind: 'nomatch' }); return; }
+          var art = pick.album && (pick.album.cover_big || pick.album.cover_medium);
+          if (!art) { resolve({ kind: 'nomatch' }); return; }
+          resolve({ kind: 'artwork', url: art });
+        }, function () {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve({ kind: 'transient' });
+        });
+      }, function () {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve({ kind: 'transient' });
+      });
+    });
+  }
+
+  // C-18: resolveCoverURL con caché + fallback a álbum (entity=album) cuando el
+  // sencillo no matchea. Si opts.coverCache existe y tiene entrada, se retorna
+  // sin tocar la red.
+  // C-19: resolveCoverURL con caché + encadenamiento Deezer → iTunes sencillo
+  // → iTunes álbum. Si opts.coverCache existe y tiene entrada, se retorna
+  // sin tocar la red.
   function resolveCoverURL(song, fetchFn, opts) {
-    if (!song || typeof fetchFn !== 'function') return Promise.resolve(null);
+    if (!song) return Promise.resolve(null);
     var title = song.title != null ? String(song.title).trim() : '';
     if (!title) return Promise.resolve(null);
     var artist = song.artist != null ? String(song.artist).trim() : '';
-    var term = (artist ? artist + ' ' : '') + title;
     var cfg = resolveCoverOpts(opts);
-    var url = ITUNES_SEARCH_URL + '?term=' + encodeURIComponent(term) + '&media=music&entity=song&limit=' + cfg.limit;
+
+    // C-18/C-19: caché primero — evita red si ya se resolvió esta canción antes.
+    var key = coverCacheKey(song);
+    if (opts && opts.coverCache && typeof opts.coverCache.get === 'function') {
+      var cached = opts.coverCache.get(key);
+      if (cached) return Promise.resolve(cached);
+    }
+
+    var term = (artist ? artist + ' ' : '') + title;
+    var deezerUrl = DEEZER_SEARCH_URL + '?q=' + encodeURIComponent(term) + '&type=track&limit=' + DEEZER_LIMIT;
+    var simpleUrl = ITUNES_SEARCH_URL + '?term=' + encodeURIComponent(term) + '&media=music&entity=song&limit=' + cfg.limit;
     var attemptsLeft = cfg.retries + 1;
     return new Promise(function (resolve) {
-      function next() {
-        singleCoverAttempt(song, fetchFn, url, cfg.timeoutMs).then(function (out) {
-          if (out.kind === 'artwork') { resolve(out.url); return; }
-          if (out.kind === 'nomatch') { resolve(null); return; }
-          if (attemptsLeft > 1) { attemptsLeft--; next(); return; }
-          resolve(null);
-        });
+      var stage = 0; // 0=deezer, 1=itunes-simple, 2=itunes-album
+
+      function cacheAndResolve(url, source) {
+        if (opts && opts.coverCache && typeof opts.coverCache.set === 'function') {
+          opts.coverCache.set(key, url, source);
+        }
+        resolve(url);
       }
+
+      function next() {
+        if (stage === 0) {
+          // C-19: Deezer como fuente primaria
+          singleDeezerAttempt(song, fetchFn, deezerUrl, cfg.timeoutMs).then(function (out) {
+            if (out.kind === 'artwork') {
+              cacheAndResolve(out.url, 'deezer');
+              return;
+            }
+            stage = 1;
+            next();
+          });
+        } else if (stage === 1) {
+          singleCoverAttempt(song, fetchFn, simpleUrl, cfg.timeoutMs).then(function (out) {
+            if (out.kind === 'artwork') {
+              cacheAndResolve(out.url, 'itunes-simple');
+              return;
+            }
+            if (out.kind === 'nomatch') {
+              stage = 2;
+              next();
+              return;
+            }
+            if (attemptsLeft > 1) { attemptsLeft--; next(); return; }
+            resolve(null);
+          });
+        } else if (stage === 2) {
+          // C-18: fallback a carátula de álbum del artista
+          resolveAlbumCover(song, fetchFn, cfg, key, opts, function (url) {
+            if (url) {
+              cacheAndResolve(url, 'itunes-album');
+            } else {
+              resolve(null);
+            }
+          });
+        }
+      }
+
       next();
     });
   }
 
+  // C-18: segundo intento por artista (entity=album) para obtener carátula del álbum.
+  function resolveAlbumCover(song, fetchFn, cfg, key, opts, resolve) {
+    var artist = song.artist != null ? String(song.artist).trim() : '';
+    if (!artist) { resolve(null); return; }
+    var albumUrl = ITUNES_SEARCH_URL + '?term=' + encodeURIComponent(artist) + '&media=music&entity=album&limit=' + cfg.limit;
+    var attemptsLeft = cfg.retries + 1;
+    function nextAlbum() {
+      singleCoverAttempt(song, fetchFn, albumUrl, cfg.timeoutMs).then(function (out) {
+        if (out.kind === 'artwork') {
+          if (opts && opts.coverCache && typeof opts.coverCache.set === 'function') {
+            opts.coverCache.set(key, out.url, 'itunes-album');
+          }
+          resolve(out.url);
+          return;
+        }
+        if (out.kind === 'nomatch') { resolve(null); return; }
+        // singleCoverAttempt usa pickCoverResult (por trackName) que no matchea
+        // álbumes; solo reintentamos ante fallo transitorio (timeout/red).
+        if (attemptsLeft > 1) { attemptsLeft--; nextAlbum(); return; }
+        resolve(null);
+      });
+    }
+    nextAlbum();
+  }
+
+  // C-18: no retorna temprano sin fetchFn — la caché y (posteriormente) lo local
+  // pueden resolver sin red. fetchFn null simplemente hace que resolveCoverURL
+  // use solo caché (si existe) y devuelva null si no.
   function enrichCovers(songs, fetchFn, onProgress, opts) {
     var list = Array.isArray(songs) ? songs : [];
-    if (typeof fetchFn !== 'function') return Promise.resolve({ resolved: 0, total: list.length });
     var cb = (typeof onProgress === 'function') ? onProgress : null;
     var pass = opts;
     if (!pass && onProgress && typeof onProgress === 'object') pass = onProgress;
@@ -324,7 +513,9 @@
     ITUNES_SEARCH_URL: ITUNES_SEARCH_URL,
     COVER_TIMEOUT_MS: COVER_TIMEOUT_MS,
     ITUNES_LIMIT: ITUNES_LIMIT,
-    COVER_RETRIES: COVER_RETRIES
+    COVER_RETRIES: COVER_RETRIES,
+    DEEZER_SEARCH_URL: DEEZER_SEARCH_URL,
+    DEEZER_LIMIT: DEEZER_LIMIT
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -564,6 +564,63 @@
   var COVER_INVALID_MESSAGE = 'Tapa no válida. Usá una URL https://… o un nombre de archivo en assets/covers/.';
   var COVERS_DIR = 'assets/covers/';
 
+  // C-18: coverCache persistente (IndexedDB con respaldo en memoria).
+  // IndexedDB está disponible en file:// y persiste entre recargas del mismo origen.
+  // get() es síncrono (usa memoria); set() escribe memoria + IndexedDB fire-and-forget.
+  var appCoverCache = {
+    _db: null,
+    _mem: {},
+    _opened: false,
+    open: function () {
+      if (this._opened) return Promise.resolve();
+      this._opened = true;
+      if (typeof indexedDB === 'undefined') return Promise.resolve();
+      var self = this;
+      return new Promise(function (resolve) {
+        var req = indexedDB.open('music-bingo-dj-covers', 1);
+        req.onupgradeneeded = function (e) {
+          var db = e.target.result;
+          if (!db.objectStoreNames.contains('covers')) {
+            db.createObjectStore('covers', { keyPath: 'key' });
+          }
+        };
+        req.onsuccess = function (e) { self._db = e.target.result; resolve(); };
+        req.onerror = function () { resolve(); };
+      });
+    },
+    get: function (key) {
+      if (this._mem && this._mem[key]) return this._mem[key];
+      return null;
+    },
+    set: function (key, url, source) {
+      if (this._mem) this._mem[key] = url;
+      if (!this._db) return;
+      try {
+        var tx = this._db.transaction('covers', 'readwrite');
+        var store = tx.objectStore('covers');
+        store.put({ key: key, url: url, source: source });
+      } catch (e) { /* IndexedDB write failed: memory cache still works */ }
+    }
+  };
+
+  // C-18: resolveCoverLocal construye rutas candidatas en assets/covers/ sin validar
+  // existencia de archivo (no hay forma síncrona en file://). La pública las intenta
+  // con img.onerror → placeholder si fallan. Orden: sencillo → artista → título.
+  // Usa normalización local (minúsculas, espacios colapsados) sin depender de import.js.
+  function normStrSimple(s) {
+    return String(s == null ? '' : s).toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+  }
+  function resolveCoverLocal(song) {
+    if (!song) return null;
+    var artist = normStrSimple(song.artist || '');
+    var title = normStrSimple(song.title || '');
+    if (!artist && !title) return null;
+    if (artist && title) return COVERS_DIR + artist + ' - ' + title + '.jpg';
+    if (artist) return COVERS_DIR + artist + '.jpg';
+    if (title) return COVERS_DIR + title + '.jpg';
+    return null;
+  }
+
   function normalizeCoverValue(raw) {
     var v = String(raw == null ? '' : raw).trim();
     if (!v) return { ok: true, value: null, cleared: true };
@@ -830,16 +887,31 @@
   // Locked or blocked imports resolve nothing (guard-first, zero fetch).
   // Counts contract intact: the frozen `N nueva(s), M duplicado(s)` message
   // is extended with the cover count, never rewritten.
+  // C-19: proxy CORS para file://. Desde origen file:// el navegador asigna
+  // origen 'null' y APIs como Deezer/iTunes bloquean la petición. Como fallback
+  // progresivo (solo pre-show, nunca en show), se reintenta vía proxy público
+  // gratuito sin registro (api.allorigins.win) que añade CORS headers.
+  var CORS_PROXY_URL = 'https://api.allorigins.win/raw?url=';
+
   function defaultCoverFetch(explicit) {
     if (typeof explicit === 'function') return explicit;
     if (typeof document === 'undefined') return null;
+    var nativeFetch = null;
     try {
-      if (typeof fetch === 'function') return fetch;
+      if (typeof fetch === 'function') nativeFetch = fetch;
     } catch (e) {}
-    try {
-      if (root && typeof root.fetch === 'function') return root.fetch;
-    } catch (e2) {}
-    return null;
+    if (!nativeFetch) {
+      try {
+        if (root && typeof root.fetch === 'function') nativeFetch = root.fetch;
+      } catch (e2) {}
+    }
+    if (!nativeFetch) return null;
+    return function (url, options) {
+      return nativeFetch(url, options).catch(function (e) {
+        var proxyUrl = CORS_PROXY_URL + encodeURIComponent(url);
+        return nativeFetch(proxyUrl, options);
+      });
+    };
   }
 
   function enrichAfterImport(result, fetchFn, opts) {
@@ -854,21 +926,19 @@
       return result;
     }
     var fn = defaultCoverFetch(fetchFn);
-    if (!fn) {
-      var offMsg = result.message + ' Tapas omitidas (sin conexión).';
-      result.message = offMsg;
-      result.coversResolved = 0;
-      setImportMessage(offMsg);
-      result.covers = Promise.resolve({ resolved: 0, total: core().state.songs.length, skipped: true });
-      return result;
-    }
+    var totalSongs = core().state.songs.length;
+    var hook = opts && typeof opts.onProgress === 'function' ? opts.onProgress : null;
+    // C-18: pasar coverCache (opts o por defecto appCoverCache) para que
+    // enriquecer use caché sin red cuando esté disponible.
+    var coverCacheToUse = (opts && opts.coverCache) || appCoverCache;
+    var pass = opts || {};
+    pass.coverCache = coverCacheToUse;
+
     // C-16 bugfix demo-covers: live i/N progress plus autosave on every
     // newly resolved cover, so a reload mid-enrich keeps partial covers
     // instead of losing them silently. Final message contract unchanged.
-    var hook = opts && typeof opts.onProgress === 'function' ? opts.onProgress : null;
-    var prevResolved = 0;
-    var totalSongs = core().state.songs.length;
     setImportMessage('Resolviendo tapas 0/' + totalSongs + '… 0 con tapa.');
+    var prevResolved = 0;
     var p = imp().enrichCovers(core().state.songs, fn, function (prog) {
       setImportMessage('Resolviendo tapas ' + prog.done + '/' + prog.total + '… ' + prog.resolved + ' con tapa.');
       if (prog.resolved > prevResolved) {
@@ -876,8 +946,13 @@
         try { persistCurrentState(); } catch (e) {}
       }
       if (hook) { try { hook(prog); } catch (e2) {} }
-    }).then(function (rep) {
-      var msg = result.message + ' Tapas resueltas: ' + rep.resolved + '/' + rep.total + '.';
+    }, pass).then(function (rep) {
+      var msg;
+      if (!fn && rep.resolved === 0) {
+        msg = result.message + ' Tapas omitidas (sin conexión).';
+      } else {
+        msg = result.message + ' Tapas resueltas: ' + rep.resolved + '/' + rep.total + '.';
+      }
       result.message = msg;
       result.coversResolved = rep.resolved;
       setImportMessage(msg);
@@ -1289,6 +1364,7 @@
     historyExportNotice: historyExportNotice,
     BLOCKED_MESSAGE: BLOCKED_MESSAGE,
     INCOMPATIBLE_MESSAGE: INCOMPATIBLE_MESSAGE,
+    CORS_PROXY_URL: CORS_PROXY_URL,
     XLSX_EMPTY_MESSAGE: XLSX_EMPTY_MESSAGE,
     FILE_READ_ERROR_MESSAGE: FILE_READ_ERROR_MESSAGE,
     XLSX_VENDOR_SRC: XLSX_VENDOR_SRC,
@@ -1317,7 +1393,10 @@
     needsUnloadWarning: needsUnloadWarning,
     beforeUnloadHandler: beforeUnloadHandler,
     showBootBanner: showBootBanner,
-    hideBootBanner: hideBootBanner
+    hideBootBanner: hideBootBanner,
+    // C-18: expuestos para tests y uso futuro
+    resolveCoverLocal: resolveCoverLocal,
+    coverCache: appCoverCache
   };
 
   if (typeof module !== 'undefined' && module.exports) {

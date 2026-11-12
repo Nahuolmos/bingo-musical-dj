@@ -4,8 +4,9 @@ Todo ejecutable por doble-click, sin red (salvo PDF/DOCX que avisa fallback).
 Dueño del drill: operador en la máquina del evento (Chrome/Edge, red apagada).
 Sin reporte del operador + checklist firmado NO hay pass.
 
-- [ ] 1. Chrome + Edge smoke: doble-click `index.html` → panel carga, sin errores consola (F12).
-- [ ] 2. Doble-click `public.html` → muestra `ESPERANDO EL SORTEO` + `¡Preparados para jugar!`, sin errores.
+- [ ] 1. Servidor local (opcional, para carátulas automáticas): `node server.js` → abrir `http://localhost:8000/index.html` en Chrome/Edge. Desde `http://` el origen no es `null` y Deezer/iTunes responden con CORS. Si abrís `index.html` por doble-click (`file://`), las carátulas online quedan bloqueadas por CORS y caen a placeholder C-14.
+- [ ] 2. Chrome + Edge smoke: abrir `index.html` (vía servidor o doble-click) → panel carga, sin errores consola (F12).
+- [ ] 3. Doble-click `public.html` → muestra `ESPERANDO EL SORTEO` + `¡Preparados para jugar!`, sin errores.
 - [ ] 3. Doble-click `tests.html` → 6/6 PASS, sin errores consola. Equivalente Node:
       `node --test tests/core.test.js tests/import.test.js tests/draw.test.js tests/store.test.js tests/structure.test.js`
 - [ ] 4. Proyector: click `▣ Abrir pantalla pública` → abre `public.html`; mover al proyector/2ª pantalla. Si bloquea popup → permitir popups para el archivo y reintentar. Si la pública muestra el aviso de navegador → abrirla en Chrome/Edge actualizado (sin BroadcastChannel ni almacenamiento no hay sincronía).

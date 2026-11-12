@@ -37,6 +37,10 @@ function itunesFetch(results) {
   return () => Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) });
 }
 
+function deezerFetch(data) {
+  return () => Promise.resolve({ ok: true, json: () => Promise.resolve({ data }) });
+}
+
 describe('c-16 1.1: Song carries coverUrl null, schemaVersion 2', () => {
   it('createSong exposes coverUrl null by default', () => {
     const { core } = fresh();
@@ -123,7 +127,8 @@ describe('c-16 2.1: resolveCoverURL best-effort with mocked fetch', () => {
     let hangCalls = 0;
     const countingHang = () => { hangCalls++; return hang(); };
     assert.equal(await imp.resolveCoverURL({ title: 'A', artist: 'B' }, countingHang, { timeoutMs: 30, retries: 1 }), null);
-    assert.equal(hangCalls, 2);
+    // Deezer (transient) → iTunes simple (transient ×2 con 1 reintento)
+    assert.equal(hangCalls, 3);
   });
 
   it('enrichCovers is sequential and idempotent, null without fetch', async () => {
@@ -363,7 +368,14 @@ describe('c-16 5.1: CSV stays six-column, delay and show path untouched', () => 
     assert.ok(!/fetch\s*\(/.test(pubSrc), 'public.js has no fetch');
     const impSrc = fs.readFileSync(path.join(root, 'js', 'import.js'), 'utf8');
     const urls = impSrc.match(/https?:\/\/[^\s'"]+/g) || [];
-    for (const u of urls) assert.ok(u.indexOf('https://itunes.apple.com') === 0, 'import remote allowlist: ' + u);
+    for (const u of urls) {
+      assert.ok(
+        u.indexOf('https://itunes.apple.com') === 0 ||
+        u.indexOf('https://api.deezer.com') === 0 ||
+        u.indexOf('https://api.allorigins.win') === 0,
+        'import remote allowlist: ' + u
+      );
+    }
   });
 });
 
@@ -432,10 +444,16 @@ describe('c-16 bugfix demo-covers: progress + per-resolve persist', () => {
     let calls = 0;
     const f = () => {
       calls++;
-      const results = calls === 1
-        ? [{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100bb.jpg' }]
-        : [];
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) });
+      if (calls === 1 || calls === 3) {
+        // Deezer: no match (canción 1 y canción 2)
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+      }
+      if (calls === 2) {
+        // iTunes simple: match canción 1
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100bb.jpg' }] }) });
+      }
+      // iTunes simple: no match canción 2
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
     };
     const seen = [];
     const rep = await imp.enrichCovers([
@@ -463,15 +481,20 @@ describe('c-16 bugfix demo-covers: progress + per-resolve persist', () => {
     try {
       const g1 = deferred(), g2 = deferred();
       let calls = 0;
-      const f = () => {
+      const f = (url) => {
         const g = calls++ === 0 ? g1 : g2;
-        return g.promise.then((results) => ({ ok: true, json: () => Promise.resolve({ results }) }));
+        return g.promise.then((results) => {
+          if (String(url).indexOf('api.deezer.com') !== -1) {
+            return { ok: true, json: () => Promise.resolve({ data: results }) };
+          }
+          return { ok: true, json: () => Promise.resolve({ results }) };
+        });
       };
       const r = app.handlePasteImport('A - T1\nA - T2', f);
-      g1.open([{ trackName: 'T1', artistName: 'A', artworkUrl100: 'https://1/100x100a.jpg' }]);
+      g1.open([{ title: 'T1', artist: { name: 'A' }, album: { cover_big: 'https://deezer/500x500a.jpg' } }]); // Deezer: match canción 1
       await flush(6);
       assert.ok(msgs.some((m) => /Resolviendo tapas 1\/2/.test(m)), 'live 1/2 seen, got: ' + JSON.stringify(msgs));
-      g2.open([]);
+      g2.open([]); // Deezer: no match canción 2 → iTunes simple: no match
       const rep = await r.covers;
       assert.deepEqual(rep, { resolved: 1, total: 2 });
       assert.match(r.message, /Tapas resueltas: 1\/2/);
@@ -488,24 +511,29 @@ describe('c-16 bugfix demo-covers: progress + per-resolve persist', () => {
     try {
       const g1 = deferred(), g2 = deferred();
       let calls = 0;
-      const f = () => {
+      const f = (url) => {
         const g = calls++ === 0 ? g1 : g2;
-        return g.promise.then((results) => ({ ok: true, json: () => Promise.resolve({ results }) }));
+        return g.promise.then((results) => {
+          if (String(url).indexOf('api.deezer.com') !== -1) {
+            return { ok: true, json: () => Promise.resolve({ data: results }) };
+          }
+          return { ok: true, json: () => Promise.resolve({ results }) };
+        });
       };
       const r = app.handlePasteImport('A - T1\nA - T2', f);
-      g1.open([{ trackName: 'T1', artistName: 'A', artworkUrl100: 'https://1/100x100a.jpg' }]);
+      g1.open([{ title: 'T1', artist: { name: 'A' }, album: { cover_big: 'https://deezer/500x500a.jpg' } }]); // Deezer: match canción 1
       await flush(6);
       const mid = JSON.parse(st._map['mbdj.v1']);
-      assert.equal(mid.songs[0].coverUrl, 'https://1/600x600a.jpg');
+      assert.equal(mid.songs[0].coverUrl, 'https://deezer/500x500a.jpg');
       assert.equal(mid.songs[1].coverUrl, null);
       let settled = false;
       r.covers.then(() => { settled = true; });
       await flush(3);
       assert.equal(settled, false);
-      g2.open([]);
+      g2.open([]); // Deezer: no match canción 2 → iTunes simple: no match
       const rep = await r.covers;
       assert.deepEqual(rep, { resolved: 1, total: 2 });
-      assert.equal(core.state.songs[0].coverUrl, 'https://1/600x600a.jpg');
+      assert.equal(core.state.songs[0].coverUrl, 'https://deezer/500x500a.jpg');
     } finally {
       if (savedLocal === undefined) delete global.localStorage;
       else global.localStorage = savedLocal;
@@ -591,6 +619,7 @@ describe('c-16 preshow-tuning: timeout 12s + limit 8 + 1 retry', () => {
       };
       const url = await imp.resolveCoverURL({ title: 'T', artist: 'A' }, flaky, { timeoutMs: 30, retries: 1 });
       assert.equal(url, 'https://r/600x600r.jpg');
+      // Deezer (cuelga+abort → transient) → iTunes simple (payload, match)
       assert.equal(calls, 2);
       assert.equal(aborts, 1);
     } finally {
@@ -603,15 +632,17 @@ describe('c-16 preshow-tuning: timeout 12s + limit 8 + 1 retry', () => {
     let calls = 0;
     const dead = () => { calls++; return Promise.reject(new Error('down')); };
     assert.equal(await imp.resolveCoverURL({ title: 'T', artist: 'A' }, dead, { timeoutMs: 30, retries: 1 }), null);
-    assert.equal(calls, 2);
+    // Deezer (transient) → iTunes simple (transient ×2 con 1 reintento)
+    assert.equal(calls, 3);
   });
 
-  it('deterministic no-match never retries: exactly one request, null cover', async () => {
+  it('deterministic no-match never retries: deezer + simple + album lookup, no transient retry', async () => {
     const { imp } = fresh();
     let calls = 0;
-    const empty = () => { calls++; return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) }); };
+    const empty = () => { calls++; return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [], results: [] }) }); };
     assert.equal(await imp.resolveCoverURL({ title: 'Zzz', artist: 'Yyy' }, empty), null);
-    assert.equal(calls, 1);
+    // 1 deezer + 1 simple + 1 album fallback = 3 calls; no transient retry because responses are valid
+    assert.equal(calls, 3);
   });
 
   it('enrichCovers forwards the retry path and keeps progress + persist contract', async () => {
@@ -628,6 +659,7 @@ describe('c-16 preshow-tuning: timeout 12s + limit 8 + 1 retry', () => {
     assert.deepEqual(rep, { resolved: 1, total: 1 });
     assert.equal(songs[0].coverUrl, 'https://r/600x600r.jpg');
     assert.deepEqual(seen, [{ done: 1, total: 1, resolved: 1 }]);
+    // Deezer (reject → transient) → iTunes simple (payload, match)
     assert.equal(calls, 2);
   });
 });
@@ -646,5 +678,277 @@ describe('c-16 B1: emitted bundle trims spaces, not the letter s', () => {
     assert.equal(sandbox.__b1.tail, 'https://x.com/photos');
     assert.equal(sandbox.__b1.head, 'salsa.jpg');
     assert.equal(sandbox.__b1.trim, 'https://x.com/a.jpg');
+  });
+});
+
+describe('c-19 7.1: Deezer como fuente primaria de carátulas', () => {
+  it('S12: Deezer match exacto retorna cover_big', async () => {
+    const { imp } = fresh();
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      deezerFetch([{ title: 'Gasolina', artist: { name: 'Daddy Yankee' }, album: { cover_big: 'https://deezer/500x500g.jpg' } }])
+    );
+    assert.equal(url, 'https://deezer/500x500g.jpg');
+  });
+
+  it('S12: Deezer usa cover_medium cuando no hay cover_big', async () => {
+    const { imp } = fresh();
+    const url = await imp.resolveCoverURL(
+      { title: 'Matador', artist: 'Los Fabulosos Cadillacs' },
+      deezerFetch([{ title: 'Matador', artist: { name: 'Los Fabulosos Cadillacs' }, album: { cover_medium: 'https://deezer/250x250m.jpg' } }])
+    );
+    assert.equal(url, 'https://deezer/250x250m.jpg');
+  });
+
+  it('S13: Deezer nomatch → iTunes simple match', async () => {
+    const { imp } = fresh();
+    let callIndex = 0;
+    const flaky = () => {
+      callIndex++;
+      if (callIndex === 1) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100g.jpg' }] }) });
+    };
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      flaky
+    );
+    assert.equal(url, 'https://x/600x600g.jpg');
+    assert.equal(callIndex, 2, 'Deezer + iTunes simple');
+  });
+
+  it('S14: Deezer → iTunes simple → iTunes álbum', async () => {
+    const { imp } = fresh();
+    let callIndex = 0;
+    const flaky = () => {
+      callIndex++;
+      if (callIndex === 1) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+      }
+      if (callIndex === 2) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [{ collectionName: 'Greatest Hits', artworkUrl100: 'https://x/100x100a.jpg', artistName: 'Daddy Yankee' }] }) });
+    };
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      flaky
+    );
+    assert.equal(url, 'https://x/600x600a.jpg');
+    assert.equal(callIndex, 3, 'Deezer + iTunes simple + iTunes álbum');
+  });
+
+  it('S15: Deezer + iTunes simple + iTunes álbum fallan → null', async () => {
+    const { imp } = fresh();
+    const empty = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [], results: [] }) });
+    const url = await imp.resolveCoverURL({ title: 'Zzz', artist: 'Yyy' }, empty);
+    assert.equal(url, null);
+  });
+
+  it('S16: caché IndexedDB hit → cero llamadas a red', async () => {
+    const { imp } = fresh();
+    const cache = { _map: { 'daddy yankee - gasolina': 'https://cached/500x500g.jpg' }, get(k) { return this._map[k] || null; }, set() { } };
+    let fetchCalls = 0;
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      () => { fetchCalls++; return Promise.reject(new Error('no se debe llamar')); },
+      { coverCache: cache }
+    );
+    assert.equal(url, 'https://cached/500x500g.jpg');
+    assert.equal(fetchCalls, 0, 'fetch no debe llamarse con caché hit');
+  });
+});
+
+describe('c-18 6.1: coverCache get/set (mock IndexedDB)', () => {
+  it('S10: coverCache stores resolved URL on first resolve', async () => {
+    const { imp } = fresh();
+    const cache = { _map: {}, get(k) { return this._map[k] || null; }, set(k, v, s) { this._map[k] = v; } };
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      itunesFetch([{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100g.jpg' }]),
+      { coverCache: cache }
+    );
+    assert.equal(url, 'https://x/600x600g.jpg');
+    assert.ok(cache._map['daddy yankee - gasolina'], 'cache key stored');
+    assert.equal(cache._map['daddy yankee - gasolina'], 'https://x/600x600g.jpg');
+  });
+
+  it('S10: coverCache returns cached URL without calling fetch on second resolve', async () => {
+    const { imp } = fresh();
+    const cache = { _map: { 'daddy yankee - gasolina': 'https://cached/600x600g.jpg' }, get(k) { return this._map[k] || null; }, set() { } };
+    let fetchCalls = 0;
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      () => { fetchCalls++; return Promise.reject(new Error('must not be called')); },
+      { coverCache: cache }
+    );
+    assert.equal(url, 'https://cached/600x600g.jpg');
+    assert.equal(fetchCalls, 0, 'fetch must not be called when cache hits');
+  });
+});
+
+describe('c-18 6.2: resolveCoverURL falls back to album when simple match fails', () => {
+  it('S2: iTunes simple nomatch → album fallback returns album artwork', async () => {
+    const { imp } = fresh();
+    // First call: simple search returns no usable match
+    // Second call (album): returns album artwork
+    let callIndex = 0;
+    const flaky = () => {
+      callIndex++;
+      if (callIndex === 1) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [{ collectionName: 'Greatest Hits', artworkUrl100: 'https://x/100x100a.jpg', artistName: 'Daddy Yankee' }] }) });
+    };
+    const url = await imp.resolveCoverURL(
+      { title: 'Gasolina', artist: 'Daddy Yankee' },
+      flaky
+    );
+    assert.equal(url, 'https://x/600x600a.jpg');
+    assert.equal(callIndex, 2, 'exactly two iTunes calls (simple + album)');
+  });
+
+  it('S2: album fallback returns null when album search also empty', async () => {
+    const { imp } = fresh();
+    const empty = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
+    const url = await imp.resolveCoverURL({ title: 'Zzz', artist: 'Yyy' }, empty);
+    assert.equal(url, null);
+  });
+});
+
+describe('c-18 6.3: resolveCoverLocal builds local candidate paths', () => {
+  it('S3/S4: resolveCoverLocal returns simple-local path first', () => {
+    const { app } = fresh();
+    const local = app.resolveCoverLocal({ title: 'Gasolina', artist: 'Daddy Yankee' });
+    assert.equal(local, 'assets/covers/daddy yankee - gasolina.jpg');
+  });
+
+  it('S3/S4: resolveCoverLocal handles artist with spaces and special chars', () => {
+    const { app } = fresh();
+    const local = app.resolveCoverLocal({ title: 'La Pachanga', artist: 'Vilma Palma e Vampiros' });
+    assert.equal(local, 'assets/covers/vilma palma e vampiros - la pachanga.jpg');
+  });
+});
+
+describe('c-18 6.4: import without network uses cache then local', () => {
+  it('S9: offline import imports songs coverless, placeholder available', async () => {
+    const { core, app } = fresh();
+    const r = app.handlePasteImport('Soda Stereo - De Musica Ligera', null);
+    assert.equal(r.added, 1);
+    await r.covers;
+    assert.equal(core.state.songs[0].coverUrl, null);
+  });
+
+  it('S10: same song imported twice with network, second uses cache zero iTunes', async () => {
+    const { core, app, imp } = fresh();
+    let fetchCalls = 0;
+    const fetchSpy = (url) => {
+      fetchCalls++;
+      if (String(url).indexOf('api.deezer.com') !== -1) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100g.jpg' }] }) });
+    };
+    const cache = { _map: {}, get(k) { return this._map[k] || null; }, set(k, v, s) { this._map[k] = v; } };
+
+    const r1 = app.handlePasteImport('Daddy Yankee - Gasolina', fetchSpy, { coverCache: cache });
+    assert.equal(r1.added, 1);
+    await r1.covers;
+    assert.equal(core.state.songs[0].coverUrl, 'https://x/600x600g.jpg');
+    assert.equal(fetchCalls, 2, 'first import calls Deezer + iTunes once');
+    assert.ok(cache._map['daddy yankee - gasolina'], 'cover cached');
+
+    // Reset songs but keep cache; second import same song with fetch that must not be called
+    core.state.songs = [];
+    core.state.history = [];
+    fetchCalls = 0;
+    const r2 = app.handlePasteImport('Daddy Yankee - Gasolina', () => { fetchCalls++; return Promise.reject(new Error('must not be called')); }, { coverCache: cache });
+    assert.equal(r2.added, 1);
+    await r2.covers;
+    assert.equal(core.state.songs[0].coverUrl, 'https://x/600x600g.jpg', 'second import uses cached cover');
+    assert.equal(fetchCalls, 0, 'zero iTunes calls on cache hit');
+  });
+
+  it('S11: song resolved online, later imported offline uses IndexedDB cache', async () => {
+    const { core, app } = fresh();
+    const cache = { _map: {}, get(k) { return this._map[k] || null; }, set(k, v, s) { this._map[k] = v; } };
+
+    // Online import resolves and caches
+    const r1 = app.handlePasteImport(
+      'Daddy Yankee - Gasolina',
+      itunesFetch([{ trackName: 'Gasolina', artistName: 'Daddy Yankee', artworkUrl100: 'https://x/100x100g.jpg' }]),
+      { coverCache: cache }
+    );
+    assert.equal(r1.added, 1);
+    await r1.covers;
+    assert.equal(core.state.songs[0].coverUrl, 'https://x/600x600g.jpg');
+    assert.ok(cache._map['daddy yankee - gasolina']);
+
+    // Offline import of same song must use cache
+    core.state.songs = [];
+    core.state.history = [];
+    const r2 = app.handlePasteImport('Daddy Yankee - Gasolina', null, { coverCache: cache });
+    assert.equal(r2.added, 1);
+    await r2.covers;
+    assert.equal(core.state.songs[0].coverUrl, 'https://x/600x600g.jpg', 'offline import uses cached cover');
+  });
+});
+
+describe('c-18 6.5: show paths issue zero cover fetch (tripwire extended)', () => {
+  it('S6: import.js, draw.js, public.js, app.js show paths have no fetch', () => {
+    const { app } = fresh();
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = path.join(__dirname, '..');
+    for (const fn of ['buildStateMessage', 'broadcast', 'render', 'schedulePublicReveal', 'setCurrentStatus', 'handleVoidRequest', 'handleCoverRequest']) {
+      assert.ok(!/fetch\s*\(/.test(String(app[fn].toString())), fn + ' issues no cover fetch');
+    }
+    const drawSrc = fs.readFileSync(path.join(root, 'js', 'draw.js'), 'utf8');
+    assert.ok(!/fetch\s*\(/.test(drawSrc), 'draw.js has no fetch');
+    const pubSrc = fs.readFileSync(path.join(root, 'js', 'public.js'), 'utf8');
+    assert.ok(!/fetch\s*\(/.test(pubSrc), 'public.js has no fetch');
+  });
+
+  it('S6: enrichCovers with coverCache and no fetch does not call fetch', async () => {
+    const { imp } = fresh();
+    const cache = { _map: { 'daddy yankee - gasolina': 'https://cached/600x600g.jpg' }, get(k) { return this._map[k] || null; }, set() { } };
+    let fetchCalls = 0;
+    const songs = [{ title: 'Gasolina', artist: 'Daddy Yankee', coverUrl: null }];
+    const rep = await imp.enrichCovers(
+      songs,
+      () => { fetchCalls++; return Promise.reject(new Error('must not be called')); },
+      null,
+      { coverCache: cache }
+    );
+    assert.deepEqual(rep, { resolved: 1, total: 1 });
+    assert.equal(songs[0].coverUrl, 'https://cached/600x600g.jpg');
+    assert.equal(fetchCalls, 0);
+  });
+});
+
+describe('c-18 6.6: locked gate and XSS rejection unchanged', () => {
+  it('S7: locked import blocks with BLOCKED_MESSAGE and zero fetch', async () => {
+    const { core, app } = fresh();
+    core.state.locked = true;
+    let calls = 0;
+    const counting = () => { calls++; return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) }); };
+    try {
+      const rp = app.handlePasteImport('A - B', counting, { coverCache: { get() { return null; }, set() { } } });
+      assert.equal(rp.blocked, true);
+      assert.equal(rp.message, app.BLOCKED_MESSAGE);
+      assert.equal(calls, 0);
+      assert.equal(core.state.songs.length, 0);
+    } finally {
+      core.state.locked = false;
+    }
+  });
+
+  it('S8: manual javascript: URL rejected, coverUrl not mutated', () => {
+    const { core, app } = fresh();
+    core.state.songs = [{ id: 's1', title: 'T', artist: 'A', status: 'available', coverUrl: null }];
+    assert.equal(app.handleCoverRequest('s1', 'javascript:alert(1)').ok, false);
+    assert.equal(app.handleCoverRequest('s1', '<img src=x onerror=alert(1)>').ok, false);
+    assert.equal(core.state.songs[0].coverUrl, null);
   });
 });

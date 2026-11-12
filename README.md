@@ -5,6 +5,7 @@ Aplicación web local para gestionar un Bingo Musical con una pantalla de operad
 ## Requisitos
 - Navegador actualizado (Chrome o Edge).
 - No requiere Node.js para abrir el prototipo actual: abrir `index.html`.
+- Para carátulas automáticas online (Deezer/iTunes), usar el servidor incluido: `node server.js` y abrir `http://localhost:8000/index.html`. Desde `file://` (doble-click) el navegador asigna origen `null` y las APIs externas bloquean CORS; las carátulas caen a placeholder C-14.
 - Algunas funciones de importación de PDF/DOCX pueden depender de bibliotecas externas y conexión a internet; verificar el comportamiento real del prototipo.
 
 ## Primer arranque
@@ -12,6 +13,14 @@ Aplicación web local para gestionar un Bingo Musical con una pantalla de operad
 2. Revisar `AGENTS.md` y `docs/PRODUCT_BRIEF.md`.
 3. Iniciar OpenCode desde la raíz del proyecto.
 4. Pedir al agente que audite el prototipo antes de cambiarlo.
+
+## Servidor local (carátulas online)
+```
+node server.js
+```
+Luego abrir en el navegador: `http://localhost:8000/index.html`
+
+El servidor también expone un proxy CORS en `http://localhost:8000/proxy?url=<url-codificada>` para uso futuro.
 
 ## Flujo de trabajo del usuario
 El proyecto se desarrolla con OpenCode y el harness `active-stack` (SDD), junto con OpenSpec. Consultá `docs/WORKFLOW.md` para el orden establecido: `openspec-init` + `/active-orchestrator`; discovery opcional; `kb-creator`; `roadmap-generator`; Skills/reglas mediante `find-skill`, `skill-registry` y `agent-instruction`; y finalmente el ciclo OPSX del change: `explore → propose → apply → verify → archive`.
