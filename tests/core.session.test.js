@@ -8,7 +8,7 @@ describe('c-02 task 1.1: session/song/history factories', () => {
     core = require('../js/core.js');
   });
 
-  it('createSession() fresh shape: empty songs/history, null current, locked=false, schemaVersion=1, ISO startedAt', () => {
+  it('createSession() fresh shape: empty songs/history, null current, locked=false, schemaVersion=2, ISO startedAt', () => {
     assert.equal(typeof core.createSession, 'function');
     const s = core.createSession();
     assert.deepEqual(s.songs, []);
@@ -16,7 +16,7 @@ describe('c-02 task 1.1: session/song/history factories', () => {
     assert.equal(s.current, null);
     assert.equal(s.spinning, false);
     assert.equal(s.locked, false);
-    assert.equal(s.schemaVersion, 1);
+    assert.equal(s.schemaVersion, 2);
     assert.match(s.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     assert.ok(!Number.isNaN(Date.parse(s.startedAt)), 'startedAt parses as date');
   });

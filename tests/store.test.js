@@ -25,11 +25,11 @@ describe('c-06 1.1 RED: store save/restore round-trip + corrupt + no-storage', (
     // Arrange: independent literals (never recomputed by the code)
     const snapshot = {
       songs: [
-        { id: 's1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn' },
-        { id: 's2', title: 'Gasolina', artist: 'Daddy Yankee', status: 'available' },
+        { id: 's1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn', coverUrl: null },
+        { id: 's2', title: 'Gasolina', artist: 'Daddy Yankee', status: 'available', coverUrl: null },
       ],
       history: [{ n: 1, id: 's1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn', time: '21:15:03' }],
-      current: { id: 's1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn' },
+      current: { id: 's1', title: 'Matador', artist: 'Los Fabulosos Cadillacs', status: 'drawn', coverUrl: null },
       locked: true,
       startedAt: '2026-10-01T20:00:00.000Z',
     };
@@ -44,7 +44,7 @@ describe('c-06 1.1 RED: store save/restore round-trip + corrupt + no-storage', (
     assert.deepEqual(back.snapshot.current, snapshot.current);
     assert.equal(back.snapshot.locked, true);
     assert.equal(back.snapshot.startedAt, '2026-10-01T20:00:00.000Z');
-    assert.equal(back.snapshot.schemaVersion, 1);
+    assert.equal(back.snapshot.schemaVersion, 2);
     assert.equal(typeof back.snapshot.savedAt, 'string');
   });
 
@@ -140,7 +140,7 @@ describe('c-06 1.3 TRIANGULATE: store edge cases', () => {
     assert.equal(typeof store.clear, 'function');
     assert.equal(typeof store.isAvailable, 'function');
     assert.equal(store.KEY, 'mbdj.v1');
-    assert.equal(store.SCHEMA_VERSION, 1);
+    assert.equal(store.SCHEMA_VERSION, 2);
     assert.ok(src.includes('MBDJ.store'), 'browser global intact');
   });
 });

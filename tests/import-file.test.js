@@ -65,7 +65,13 @@ describe('c-05 1.1 RED: parseXlsxBuffer seam (first-sheet rows -> songs, offline
     const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'import.js'), 'utf8');
     assert.match(src, /parseXlsxBuffer/);
     assert.doesNotMatch(src, /cdnjs/);
-    assert.doesNotMatch(src, /https?:\/\//);
+    // c-16 whitelist: the ONLY remote host allowed in import.js is the keyless
+    // iTunes Search API used for best-effort cover resolution at import time.
+    const urls = src.match(/https?:\/\/[^\s'"]+/g) || [];
+    assert.ok(urls.length > 0, 'iTunes URL present');
+    for (const u of urls) {
+      assert.ok(u.indexOf('https://itunes.apple.com') === 0, 'only iTunes host allowed in import.js, got: ' + u);
+    }
     const out = imp.parseXlsxBuffer(new Uint8Array([7]).buffer);
     assert.equal(readCalls, 1);
     assert.equal(out.length, 1);

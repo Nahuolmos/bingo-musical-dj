@@ -957,13 +957,13 @@ describe('c-15 2.1: instant dashboard result (RED)', () => {
     assert.equal(app.formatCopyText(core.state.current), picked.title + ' — ' + picked.artist);
   });
 
-  it('handleDrawClick paints the result synchronously and owns only the public buffer', () => {
+  it('handleDrawClick paints the result synchronously and arms the gate (c-17: buffer starts at the gate)', () => {
     // Arrange
     const doc = c15StubDocument();
     globalThis.document = doc;
     const appFake = makeFakeTimers();
     app.setPublicTimerFns(appFake);
-    // Act
+    // Act: the operator hits Sortear — commit + private paint + neutral wait
     const s = app.handleDrawClick();
     // Assert: immediate result on the dashboard (no operator timeout)
     assert.ok(s, 'draw returns the song');
@@ -971,7 +971,17 @@ describe('c-15 2.1: instant dashboard result (RED)', () => {
     assert.equal(doc._els.resultArtist.textContent, s.artist, 'artist painted at once');
     assert.ok(doc._els.result.classList.contains('show'), 'result panel visible at once');
     assert.equal(typeof draw.scheduleReveal, 'undefined', 'no operator-side reveal exists');
-    assert.equal(app.isPublicBuffer(), true, 'only the 5 s public buffer is pending');
+    // Assert (c-17): the commit arms the gate, the 5 s buffer does NOT start here
+    assert.equal(app.isAwaitingGate(), true, 'gate pending after the commit');
+    assert.equal(app.isPublicBuffer(), false, 'no public buffer before the gate');
+    assert.equal(appFake.pending.size, 0, 'no timer scheduled at commit');
+    // Act: the DJ triggers the gate — the unchanged 5 s buffer starts now
+    const gated = app.handleRevealGate();
+    // Assert
+    assert.ok(gated, 'gate returns the pending song');
+    assert.equal(gated.id, s.id, 'same commit, no second draw');
+    assert.equal(app.isAwaitingGate(), false, 'gate consumed');
+    assert.equal(app.isPublicBuffer(), true, 'the 5 s public buffer is pending after the gate');
     assert.equal(Array.from(appFake.pending.values())[0].ms, 5000, 'buffer waits the named delay');
     // Assert: commit-before-show intact (history entry precedes every paint)
     assert.equal(core.state.history.length, 1);
@@ -1344,13 +1354,15 @@ describe('c-15 5.1: buffer guards + single reveal owner (RED)', () => {
     assert.equal(core.state.current, null);
   });
 
-  it('no spinning term remains in button predicates or guards (isPublicBuffer only)', () => {
+  it('no spinning term remains in button predicates or guards (gate + buffer own them)', () => {
     const fs = require('node:fs');
     const code = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     assert.ok(!/st\.spinning/.test(code), 'no st.spinning term in app.js');
     assert.ok(!/SPIN_MS|scheduleReveal\(|cancelReveal\(|isRevealing\(|finishCommit/.test(code), 'no operator timer refs in app.js');
     assert.ok(/isPublicBuffer\(\)/.test(code), 'buffer predicate owns the guards');
+    // c-17: draw/confirm guards re-key to gate+buffer with no other term
+    assert.ok(/isAwaitingGate\(\) \|\| isPublicBuffer\(\)/.test(code), 'gate+buffer re-key present');
   });
 });
 

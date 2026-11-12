@@ -92,7 +92,9 @@
         history: st.history,
         current: st.current,
         locked: st.locked,
-        startedAt: st.startedAt
+        startedAt: st.startedAt,
+        // C-17: additive gate flag (no schema bump; missing hydrates false).
+        awaitingGate: awaitingGate === true
       }, storage);
     } catch (e) {
       return { ok: false, reason: 'unavailable' };
@@ -106,6 +108,9 @@
     c.state.current = null;
     c.state.spinning = false;
     c.state.locked = false;
+    // C-17: vaciar el tablero también suelta el gate (sin current no hay
+    // espera que restaurar; boot corrupto nunca resucita un gate).
+    cancelAwaitingGate();
   }
 
   // Validate-then-hydrate: full apply or empty, never partial. Forces
@@ -127,6 +132,11 @@
       c.state.locked = s.locked === true;
       if (typeof s.startedAt === 'string' && s.startedAt) c.state.startedAt = s.startedAt;
       c.state.spinning = false;
+      // C-17: el gate pendiente sobrevive al refresh solo junto a su commit
+      // dibujado (flag + current drawn). Snapshots pre-change (sin flag) o
+      // inconsistentes (flag sin current) hidratan sin gate, sin timeout ni
+      // auto-reveal — el DJ decide al reabrir.
+      awaitingGate = (s.awaitingGate === true && c.state.current != null && c.state.current.status === 'drawn');
       // Locked-but-empty is still a session: the operator must see the banner
       // (+ "Descartar y empezar de cero" escape) instead of a silent fresh
       // boot, otherwise a cleared-while-locked snapshot bricks imports with
@@ -180,18 +190,27 @@
     // drawn song already left the pool — exclusion is structural (by id),
     // never sent to mbdj.v1. Empty when the draw exhausts the catalog.
     var scrollPool = null;
-    if (ph === 'spinning') {
+    // C-17 gated wait: same title-free scrub as `spinning` (current null,
+    // drawn songs/artists/covers blanked, drawn history withheld) but WITHOUT
+    // `scrollPool` — nothing scrolls until the DJ triggers the gate. The pool
+    // is built fresh at gate time, never persisted.
+    if (ph === 'spinning' || ph === 'awaiting-gate') {
       outSongs = st.songs.map(function (s) {
         if (s.status !== 'drawn') return s;
-        return { id: s.id, title: '', artist: '', status: s.status, addedAt: s.addedAt };
+        // C-16 anti-spoiler: the scrubbed clone also drops coverUrl so the
+        // committed artwork never leaks during the spinning buffer.
+        return { id: s.id, title: '', artist: '', status: s.status, addedAt: s.addedAt, coverUrl: null };
       });
       outHistory = st.history.filter(function (h) { return h.status !== 'drawn'; });
-      scrollPool = av.map(function (s) {
-        return { id: s.id, title: s.title, artist: s.artist };
-      });
+      if (ph === 'spinning') {
+        scrollPool = av.map(function (s) {
+          return { id: s.id, title: s.title, artist: s.artist };
+        });
+      }
     } else if (st.current) {
       // C-08: id included so the projector can dedupe off (phase, current.id).
-      outCurrent = { id: st.current.id, title: st.current.title, artist: st.current.artist, status: st.current.status };
+      // C-16: coverUrl travels for the reveal image (null when coverless).
+      outCurrent = { id: st.current.id, title: st.current.title, artist: st.current.artist, status: st.current.status, coverUrl: (st.current.coverUrl == null ? null : st.current.coverUrl) };
     }
     return {
       type: 'state',
@@ -277,6 +296,23 @@
 
   function isPublicBuffer() { return publicRevealTimer !== null && publicRevealTimer !== undefined; }
 
+  // C-17 gated reveal: el commit arma un gate pendiente — el DJ ve el
+  // resultado en privado y la pública espera en neutro hasta que el DJ
+  // pulsa Revelar. El flag vive en memoria + mbdj.v1 (aditivo, sin bump).
+  // El predicado excluye el buffer: gate y buffer nunca coexisten (el gate
+  // se consume síncrono antes de programar el buffer).
+  var awaitingGate = false;
+
+  function isAwaitingGate() { return awaitingGate === true && !isPublicBuffer(); }
+
+  function _resetGateForTest() { awaitingGate = false; }
+
+  function cancelAwaitingGate() {
+    if (awaitingGate !== true) return false;
+    awaitingGate = false;
+    return true;
+  }
+
   function broadcast(a, b) {
     // Overload: broadcast('spinning'|'reveal'|'idle', storage?) or legacy
     // broadcast(storage?). No-arg callers (render, openPublic re-sync) get the
@@ -288,7 +324,8 @@
     if (!phase) {
       var c = core();
       var st = c.state;
-      phase = isPublicBuffer() ? 'spinning' : (st.current ? 'reveal' : 'idle');
+      // C-17: el gate pendiente rutea a la espera neutra (nunca al título).
+      phase = isAwaitingGate() ? 'awaiting-gate' : (isPublicBuffer() ? 'spinning' : (st.current ? 'reveal' : 'idle'));
     }
     var msg = buildStateMessage(phase);
     if (channel) {
@@ -309,8 +346,33 @@
     $('drawnStat').textContent = counters.drawn;
     // C-15: draw/confirm stay disabled through the 5 s public buffer —
     // isPublicBuffer() is the single predicate (no operator spin remains).
-    $('drawBtn').disabled = !av.length || isPublicBuffer();
-    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || isPublicBuffer();
+    // C-17 re-key: draw + confirm stand down through gate AND buffer
+    // (`isAwaitingGate() || isPublicBuffer()`, no other term). The reveal
+    // control is the only action enabled mid-gate (own predicate above).
+    $('drawBtn').disabled = !av.length || isAwaitingGate() || isPublicBuffer();
+    $('confirmBtn').disabled = !st.current || st.current.status !== 'drawn' || isAwaitingGate() || isPublicBuffer();
+    // C-17: el control de reveal vive solo con gate pendiente (solo dashboard).
+    // Null-safe: harnesses que stubbean un subset de ids igual reciben el
+    // flag (el stub crea el id bajo demanda); en browser el id siempre existe.
+    var gateBtn = $('revealGateBtn');
+    if (gateBtn) {
+      gateBtn.hidden = !isAwaitingGate();
+      gateBtn.disabled = !isAwaitingGate();
+    }
+    // C-17: refresh mid-gate — el dashboard privado restaura el resultado
+    // commiteado (mismo paint que handleDrawClick, idempotente en cada
+    // render). Sin current dibujado el panel no se toca (played/void ya lo
+    // ocultaron; el boot limpio arranca oculto en el HTML).
+    if (st.current && st.current.status === 'drawn') {
+      var dh = $('drawHeading'); if (dh) dh.textContent = '¡Esta es la canción!';
+      var dd = $('drawDesc'); if (dd) dd.textContent = 'Buscala en VirtualDJ y reproducila. Cuando termine de sonar, marcala como reproducida.';
+      var rt = $('resultTitle'); if (rt) rt.textContent = st.current.title;
+      var ra = $('resultArtist'); if (ra) ra.textContent = st.current.artist || 'Artista no especificado';
+      var rp = $('result');
+      if (rp && rp.classList && typeof rp.classList.add === 'function') {
+        try { rp.classList.add('show'); } catch (e) {}
+      }
+    }
     // C-11 session-lock: every mutation control stands down while locked
     // (import/file/edit/clear/reset) and the admin unlock arms itself ONLY
     // while locked. Single isImportBlocked() predicate — one funnel, no drift.
@@ -352,8 +414,11 @@
       // C-11 edit affordance: per-row correction via handleEditRequest
       // (prompt seam). Disabled while locked — the seam refuses anyway
       // (defense in depth: UI disable + guard-first refusal).
+      // C-16 cover affordance: per-row input+Fijar+preview via
+      // handleCoverRequest (no prompt, no fetch). Same lock gating.
       var editOff = (st.locked === true) ? ' disabled' : '';
-      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + pill + '</span><button class="subtle" data-edit-id="' + c.esc(s.id) + '"' + editOff + '>Editar</button></div>';
+      var coverVal = (s.coverUrl == null) ? '' : String(s.coverUrl);
+      return '<div class="song"><span class="num">' + String(i + 1).padStart(2, '0') + '</span><div class="songtext"><strong>' + c.esc(s.title) + '</strong><small>' + c.esc(artistLabel(s.artist)) + '</small></div><span class="pill ' + (s.status === 'played' ? 'done' : s.status === 'void' ? '' : 'pending') + '">' + pill + '</span><button class="subtle" data-edit-id="' + c.esc(s.id) + '"' + editOff + '>Editar</button><div class="coverrow"><span class="coverprev">' + coverPreviewHTML(s) + '</span><input class="coverinput" data-cover-for="' + c.esc(s.id) + '" value="' + c.esc(coverVal) + '" placeholder="URL https://… o archivo" maxlength="500"' + editOff + '><button class="subtle" data-cover-set="' + c.esc(s.id) + '"' + editOff + '>Fijar</button></div></div>';
     }).join('') : '<div class="empty">No hay coincidencias.</div>';
     $('historyCount').textContent = st.history.length + ' registro' + (st.history.length === 1 ? '' : 's');
     $('historyList').innerHTML = st.history.length ? [].concat(st.history).reverse().map(function (h) {
@@ -374,9 +439,9 @@
   function setCurrentStatus(status, motivo) {
     var c = core();
     var st = c.state;
-    // C-15 public-buffer guard: confirm blocked mid-buffer, no effect until
-    // the public reveal completes (C-09 confirm gates on this: sin buffer pendiente).
-    if (isPublicBuffer()) return;
+    // C-17 gate+buffer guard: confirm blocked mid-gate and mid-buffer, no
+    // effect until the public reveal completes (C-09 confirm gates on this).
+    if (isAwaitingGate() || isPublicBuffer()) return;
     if (!st.current || st.current.status !== 'drawn') return;
     st.current.status = status;
     var h = null;
@@ -414,7 +479,8 @@
     var c = core();
     var st = c.state;
     if (!st.current || st.current.status !== 'drawn') return false;
-    if (isPublicBuffer()) return false;
+    // C-17 gate+buffer guard: the prompt never fires mid-gate/mid-buffer.
+    if (isAwaitingGate() || isPublicBuffer()) return false;
     var pf = (typeof promptFn === 'function') ? promptFn
       : (typeof prompt !== 'undefined' ? function (m) { return prompt(m); } : null);
     if (!pf) return false;
@@ -491,6 +557,82 @@
     if (typeof document !== 'undefined') render();
     return { ok: true, song: song };
   }
+  // C-16 song-covers: manual per-row cover seam. Guard-first locked refusal
+  // (same BLOCKED_MESSAGE funnel as edits; no prompt, no fetch, no mutation).
+  // normalize: trim; '' -> null (clear); http(s) -> remote as-is; bare
+  // filename without / \ .. or markup -> assets/covers/<name>; rest rejected.
+  var COVER_INVALID_MESSAGE = 'Tapa no válida. Usá una URL https://… o un nombre de archivo en assets/covers/.';
+  var COVERS_DIR = 'assets/covers/';
+
+  function normalizeCoverValue(raw) {
+    var v = String(raw == null ? '' : raw).trim();
+    if (!v) return { ok: true, value: null, cleared: true };
+    if (/^https?:\/\//i.test(v)) return { ok: true, value: v };
+    if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return { ok: false, reason: 'invalid' };
+    if (v.indexOf('/') !== -1 || v.indexOf('\\') !== -1 || v.indexOf('..') !== -1) return { ok: false, reason: 'invalid' };
+    if (/[<>"']/.test(v)) return { ok: false, reason: 'invalid' };
+    return { ok: true, value: COVERS_DIR + v };
+  }
+
+  function handleCoverRequest(songId, raw, opts) {
+    var c = core();
+    var st = c.state;
+    if (st.locked === true) {
+      setImportMessage(BLOCKED_MESSAGE);
+      return { blocked: true, message: BLOCKED_MESSAGE };
+    }
+    var song = null;
+    for (var i = 0; i < st.songs.length; i++) {
+      if (st.songs[i].id === songId) { song = st.songs[i]; break; }
+    }
+    if (!song) return { ok: false, reason: 'not-found' };
+    var norm = normalizeCoverValue(raw);
+    if (!norm.ok) {
+      setImportMessage(COVER_INVALID_MESSAGE);
+      return { ok: false, reason: 'invalid', message: COVER_INVALID_MESSAGE };
+    }
+    song.coverUrl = norm.value;
+    var storage = opts && opts.storage;
+    try { persistCurrentState(storage); } catch (e) {}
+    if (typeof document !== 'undefined') { try { render(); } catch (e2) {} }
+    return { ok: true, song: song };
+  }
+
+  // C-16 operator preview: remote/local image with onerror swap to the
+  // placeholder glyph (never breaks the row when a remote is offline).
+  function coverPreviewHTML(song) {
+    var c = core();
+    if (!song || song.coverUrl == null || String(song.coverUrl).trim() === '') {
+      return '<span class="coverph" title="Sin tapa">♪</span>';
+    }
+    return '<img class="coverthumb" src="' + c.esc(String(song.coverUrl)) + '" alt="" loading="lazy" onerror="if(window.MBDJ&&MBDJ.app&&MBDJ.app.coverImgFallback)MBDJ.app.coverImgFallback(this)">';
+  }
+
+  function coverImgFallback(el) {
+    try {
+      if (typeof document === 'undefined' || !el || !el.parentNode) return;
+      var s = document.createElement('span');
+      s.className = 'coverph';
+      s.setAttribute('title', 'Sin tapa');
+      s.textContent = '♪';
+      el.parentNode.replaceChild(s, el);
+    } catch (e) {}
+  }
+
+  function readCoverInput(container, songId) {
+    try {
+      if (!container || !container.getElementsByTagName) return '';
+      var inputs = container.getElementsByTagName('input');
+      for (var i = 0; i < inputs.length; i++) {
+        var n = inputs[i];
+        if (n && n.getAttribute && n.getAttribute('data-cover-for') === songId) {
+          return ('value' in n) ? n.value : '';
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
   // C-09 confirm-void: copy seam for manual VirtualDJ cue (clipboard +
   // legacy prompt fallback). Pure boundary: tests inject mocks, the click
   // handler injects the real clipboard/prompt. Never mutates draw state.
@@ -528,15 +670,18 @@
   // Secure draw UI flow: commit via draw.pickAndCommit() BEFORE paint.
   // C-15 instant result: the dashboard shows title+artist+copy the instant
   // the commit lands — no operator wheel animation, no operator-side timer.
-  // The only pending window is the 5 s public buffer (REVEAL_DELAY_MS).
+  // C-17 gated reveal: the commit NO LONGER starts the 5 s public buffer.
+  // It paints the private dashboard result, emits the neutral `awaiting-gate`
+  // wait to the public screen, and arms the gate. The buffer starts only
+  // when the DJ triggers handleRevealGate() (fresh scrollPool at gate time).
   function handleDrawClick() {
-    // C-08 buffer guard first (Node-testable): mid-buffer draws are no-ops
-    // even before reaching the DOM path below.
-    if (isPublicBuffer()) return null;
+    // C-17 gate+buffer guard first (Node-testable): mid-gate and mid-buffer
+    // draws are no-ops even before reaching the DOM path below.
+    if (isAwaitingGate() || isPublicBuffer()) return null;
     if (typeof document === 'undefined') return null;
     var c = core();
     var st = c.state;
-    if (isPublicBuffer() || !c.available().length) return null;
+    if (isAwaitingGate() || isPublicBuffer() || !c.available().length) return null;
     // Commit-before-render (RN-SOR-02): the song is decided + persisted here;
     // the paint below only renders the committed song (never decides).
     var s = drawm().pickAndCommit();
@@ -553,16 +698,46 @@
     $('result').classList.add('show');
     $('drawBtn').disabled = true;
     $('confirmBtn').disabled = true;
-    // C-08: commit-time envelope is title-free on the public screen while the
-    // operator already reads the title to cue VirtualDJ manual — hence
-    // `spinning`, never `reveal`, on this broadcast.
-    broadcast('spinning');
-    // C-15: single pending owner is the public buffer (no operator reveal).
+    // C-17: commit-time envelope is the neutral gated wait — title-free on
+    // the public screen while the operator already reads the title to cue
+    // VirtualDJ manual. The 5 s buffer starts only at the gate, never here.
+    awaitingGate = true;
+    try { persistCurrentState(); } catch (e) {}
+    broadcast('awaiting-gate');
+    // C-17 fix gate-button: el path real pintaba el resultado a mano y
+    // nunca re-renderizaba, asi que #revealGateBtn quedaba hidden=true
+    // aunque el flag ya estaba activo (los tests lo enmascaraban con un
+    // render() manual extra). render() es idempotente: repinta el mismo
+    // resultado commiteado + expone el boton + re-emite awaiting-gate.
+    try { render(); } catch (e2) {}
+    return s;
+  }
+
+  // C-17 dashboard-only reveal control seam. Consumes the gate SYNCHRONOUSLY
+  // (flag off before scheduling, so a double-click runs a single buffer),
+  // then runs the unchanged C-15 path: fresh `scrollPool` from available()
+  // at gate time → `broadcast('spinning')` → 5 s scheduler → `broadcast('reveal')`.
+  // The gate mutates nothing: no status/current/history/lock change, no entry.
+  // Returns the pending song, or null when no gate is pending (no-op).
+  function handleRevealGate(storage) {
+    if (!isAwaitingGate()) return null;
+    var c = core();
+    var st = c.state;
+    if (!st.current || st.current.status !== 'drawn') {
+      awaitingGate = false;
+      try { persistCurrentState(storage); } catch (e) {}
+      return null;
+    }
+    var pending = st.current;
+    awaitingGate = false; // consume-first: the second press is a no-op
+    broadcast('spinning', storage);
     schedulePublicReveal(function () {
       broadcast('reveal');
       render();
     });
-    return s;
+    try { persistCurrentState(storage); } catch (e) {}
+    if (typeof document !== 'undefined') render();
+    return pending;
   }
 
   function buildDemoSongs() {
@@ -576,7 +751,7 @@
       ['ABBA', 'Gimme! Gimme! Gimme!'], ['Daddy Yankee', 'Gasolina']
     ];
     return pairs.map(function (p) {
-      return { id: c.makeId(), artist: p[0], title: p[1], status: 'available', addedAt: new Date().toISOString() };
+      return { id: c.makeId(), artist: p[0], title: p[1], status: 'available', addedAt: new Date().toISOString(), coverUrl: null };
     });
   }
 
@@ -637,12 +812,91 @@
     return imp().importSongs(items, label);
   }
 
-  function handlePasteImport(text) {
-    return guardedImport(imp().parseText(text), 'texto');
+  function handlePasteImport(text, fetchFn, opts) {
+    var r = guardedImport(imp().parseText(text), 'texto');
+    if (r.blocked) return r;
+    return enrichAfterImport(r, fetchFn, opts);
   }
 
-  function handleDemoImport() {
-    return guardedImport(buildDemoSongs(), 'demo');
+  function handleDemoImport(fetchFn, opts) {
+    var r = guardedImport(buildDemoSongs(), 'demo');
+    if (r.blocked) return r;
+    return enrichAfterImport(r, fetchFn, opts);
+  }
+
+  // C-16 song-covers: best-effort cover enrichment post-import (never in show).
+  // Default fetch is browser-only (window.fetch via global fetch); Node/tests
+  // pass an explicit fetchFn mock or get the offline path (no implicit net).
+  // Locked or blocked imports resolve nothing (guard-first, zero fetch).
+  // Counts contract intact: the frozen `N nueva(s), M duplicado(s)` message
+  // is extended with the cover count, never rewritten.
+  function defaultCoverFetch(explicit) {
+    if (typeof explicit === 'function') return explicit;
+    if (typeof document === 'undefined') return null;
+    try {
+      if (typeof fetch === 'function') return fetch;
+    } catch (e) {}
+    try {
+      if (root && typeof root.fetch === 'function') return root.fetch;
+    } catch (e2) {}
+    return null;
+  }
+
+  function enrichAfterImport(result, fetchFn, opts) {
+    if (!result || result.blocked) {
+      if (result) result.covers = Promise.resolve({ resolved: 0, total: 0, skipped: true });
+      return result;
+    }
+    if (isImportBlocked()) return result;
+    // Empty input keeps its frozen copy verbatim (no cover suffix).
+    if ((result.added + result.duplicates) === 0) {
+      result.covers = Promise.resolve({ resolved: 0, total: 0, skipped: true });
+      return result;
+    }
+    var fn = defaultCoverFetch(fetchFn);
+    if (!fn) {
+      var offMsg = result.message + ' Tapas omitidas (sin conexión).';
+      result.message = offMsg;
+      result.coversResolved = 0;
+      setImportMessage(offMsg);
+      result.covers = Promise.resolve({ resolved: 0, total: core().state.songs.length, skipped: true });
+      return result;
+    }
+    // C-16 bugfix demo-covers: live i/N progress plus autosave on every
+    // newly resolved cover, so a reload mid-enrich keeps partial covers
+    // instead of losing them silently. Final message contract unchanged.
+    var hook = opts && typeof opts.onProgress === 'function' ? opts.onProgress : null;
+    var prevResolved = 0;
+    var totalSongs = core().state.songs.length;
+    setImportMessage('Resolviendo tapas 0/' + totalSongs + '… 0 con tapa.');
+    var p = imp().enrichCovers(core().state.songs, fn, function (prog) {
+      setImportMessage('Resolviendo tapas ' + prog.done + '/' + prog.total + '… ' + prog.resolved + ' con tapa.');
+      if (prog.resolved > prevResolved) {
+        prevResolved = prog.resolved;
+        try { persistCurrentState(); } catch (e) {}
+      }
+      if (hook) { try { hook(prog); } catch (e2) {} }
+    }).then(function (rep) {
+      var msg = result.message + ' Tapas resueltas: ' + rep.resolved + '/' + rep.total + '.';
+      result.message = msg;
+      result.coversResolved = rep.resolved;
+      setImportMessage(msg);
+      try {
+        if (typeof document !== 'undefined') render();
+        else persistCurrentState();
+      } catch (e) {}
+      return rep;
+    });
+    result.covers = p;
+    return result;
+  }
+
+  // C-16 file seam: parse+guard+enrich for every file reader branch
+  // (TXT/CSV/TSV/XLSX/PDF/DOCX share the same best-effort cover path).
+  function handleFileSongs(songs, fileName, fetchFn, opts) {
+    var r = guardedImport(songs, fileName);
+    if (r.blocked) return r;
+    return enrichAfterImport(r, fetchFn, opts);
   }
 
   // Review surface helpers (pure, Node-testable; render() consumes them).
@@ -759,6 +1013,7 @@
     }
     if (typeof document === 'undefined') {
       cancelPublicReveal();
+      cancelAwaitingGate();
       var c0 = core();
       c0.state.songs = [];
       c0.state.history = [];
@@ -770,7 +1025,11 @@
     if (c.state.history.length && !confirm('Ya hay historial. ¿Querés borrar también el historial y reiniciar la partida?')) return false;
     // C-15: cancel the pending public buffer so no ghost result resurrects
     // cleared state (mid-buffer alike). No operator timer remains.
+    // C-17: cancelling the gate too — at most one reveal per commit, and a
+    // mid-gate clear never fires afterward. render() below re-broadcasts the
+    // neutral idle and persists the cancelled gate via the C-06 autosave.
     cancelPublicReveal();
+    cancelAwaitingGate();
     c.state.songs = [];
     c.state.history = [];
     c.state.current = null;
@@ -791,6 +1050,7 @@
     }
     if (typeof document === 'undefined') {
       cancelPublicReveal();
+      cancelAwaitingGate();
       var c0 = core();
       c0.state.songs = [];
       c0.state.history = [];
@@ -800,6 +1060,7 @@
     var c = core();
     if (!confirm('¿Reiniciar toda la partida? Se borrarán canciones cargadas, sorteos e historial. Exportá el historial primero si lo necesitás.')) return false;
     cancelPublicReveal();
+    cancelAwaitingGate();
     c.state.songs = [];
     c.state.history = [];
     c.state.current = null;
@@ -852,6 +1113,9 @@
     var dism = $('dismissBanner');
     if (dism) dism.addEventListener('click', hideBootBanner);
     $('drawBtn').addEventListener('click', handleDrawClick);
+    // C-17: control de reveal solo-dashboard (habilitado solo con gate).
+    var revealGateBtn = $('revealGateBtn');
+    if (revealGateBtn) revealGateBtn.addEventListener('click', function () { handleRevealGate(); });
     $('confirmBtn').addEventListener('click', function () { setCurrentStatus('played'); });
     $('skipResult').addEventListener('click', function () {
       handleVoidRequest();
@@ -898,6 +1162,9 @@
       var t = e && e.target;
       var editId = t && t.getAttribute ? t.getAttribute('data-edit-id') : null;
       if (editId) handleEditRequest(editId);
+      // C-16 cover set: reads the sibling input, no prompt, no fetch.
+      var coverId = t && t.getAttribute ? t.getAttribute('data-cover-set') : null;
+      if (coverId) handleCoverRequest(coverId, readCoverInput(songList, coverId));
     });
     $('sampleBtn').addEventListener('click', function () { handleDemoImport(); });
     $('exportLog').addEventListener('click', function () {
@@ -924,7 +1191,7 @@
           var kind = getFileKind(f.name);
           if (kind === 'text') {
             text = await f.text();
-            imp().importSongs(imp().parseText(text), f.name);
+            handleFileSongs(imp().parseText(text), f.name);
           } else if (kind === 'xlsx') {
             var mx = document.getElementById('importMessage');
             if (mx) mx.textContent = 'Leyendo Excel…';
@@ -933,7 +1200,7 @@
             if (!songs.length) {
               if (mx) mx.textContent = XLSX_EMPTY_MESSAGE;
             } else {
-              imp().importSongs(songs, f.name);
+              handleFileSongs(songs, f.name);
             }
           } else if (ext === 'pdf') {
             var m1 = document.getElementById('importMessage');
@@ -946,13 +1213,13 @@
               var content = await page.getTextContent();
               text += content.items.map(function (x) { return x.str; }).join(' ') + '\n';
             }
-            imp().importSongs(imp().parseText(text), f.name);
+            handleFileSongs(imp().parseText(text), f.name);
           } else if (ext === 'docx') {
             var m2 = document.getElementById('importMessage');
             if (m2) m2.textContent = 'Leyendo DOCX…';
             await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js');
             var out = await window.mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() });
-            imp().importSongs(imp().parseText(out.value), f.name);
+            handleFileSongs(imp().parseText(out.value), f.name);
           } else {
             var m3 = document.getElementById('importMessage');
             if (m3) m3.textContent = INCOMPATIBLE_MESSAGE;
@@ -988,6 +1255,10 @@
     TRANSPORT_KEY: TRANSPORT_KEY,
     REVEAL_DELAY_MS: REVEAL_DELAY_MS,
     isPublicBuffer: isPublicBuffer,
+    isAwaitingGate: isAwaitingGate,
+    handleRevealGate: handleRevealGate,
+    cancelAwaitingGate: cancelAwaitingGate,
+    _resetGateForTest: _resetGateForTest,
     schedulePublicReveal: schedulePublicReveal,
     cancelPublicReveal: cancelPublicReveal,
     setPublicTimerFns: setPublicTimerFns,
@@ -1000,6 +1271,13 @@
     handleVoidRequest: handleVoidRequest,
     handleUnlockRequest: handleUnlockRequest,
     handleEditRequest: handleEditRequest,
+    normalizeCoverValue: normalizeCoverValue,
+    handleCoverRequest: handleCoverRequest,
+    coverPreviewHTML: coverPreviewHTML,
+    coverImgFallback: coverImgFallback,
+    readCoverInput: readCoverInput,
+    COVER_INVALID_MESSAGE: COVER_INVALID_MESSAGE,
+    COVERS_DIR: COVERS_DIR,
     formatCopyText: formatCopyText,
     handleCopyRequest: handleCopyRequest,
     handleDrawClick: handleDrawClick,
@@ -1020,6 +1298,9 @@
     guardedImport: guardedImport,
     handlePasteImport: handlePasteImport,
     handleDemoImport: handleDemoImport,
+    handleFileSongs: handleFileSongs,
+    enrichAfterImport: enrichAfterImport,
+    defaultCoverFetch: defaultCoverFetch,
     reviewCounters: reviewCounters,
     filterSongs: filterSongs,
     artistLabel: artistLabel,

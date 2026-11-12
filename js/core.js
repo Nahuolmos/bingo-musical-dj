@@ -16,7 +16,7 @@
     spinning: false,
     locked: false,
     startedAt: new Date().toISOString(),
-    schemaVersion: 1
+    schemaVersion: 2
   };
 
   // Verbatim from monolith.
@@ -45,7 +45,8 @@
       title: title,
       artist: (artist == null || artist === '') ? '' : String(artist),
       status: 'available',
-      addedAt: new Date().toISOString()
+      addedAt: new Date().toISOString(),
+      coverUrl: null
     };
   }
 
@@ -68,7 +69,7 @@
   // c-11: song-less administrative unlock entry (the C-11 writer in js/app.js
   // handleUnlockRequest is the ONLY producer). Fits HistoryEntry + motivo so
   // the C-10 tolerant render/CSV and the C-06 autosave carry it with zero
-  // schema bump (schemaVersion stays 1). `unlock-` prefix + timestamp + rand
+  // schema bump (schemaVersion stays 2). `unlock-` prefix + timestamp + rand
   // never collides with a song id (`s…`); unlock rows are never looked up by
   // draw paths. Visible state 'unlock' — never mislabeled Sorteada.
   function createUnlockEntry(n, motivo) {
@@ -91,7 +92,7 @@
       spinning: false,
       locked: false,
       startedAt: new Date().toISOString(),
-      schemaVersion: 1
+      schemaVersion: 2
     };
   }
 

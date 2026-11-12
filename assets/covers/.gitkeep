@@ -1,0 +1,4 @@
+Carátulas locales pre-show (c-16): copiá aquí los archivos de tapa
+para los temas clave (p. ej. `matador.jpg`) y fijalos desde el campo
+"Tapa" de cada fila (nombre de archivo o URL https://). Sin red en el
+show, solo estos archivos locales cargan; las remotas caen al placeholder.

@@ -121,14 +121,14 @@
   check('store.js mbdj.v1 autosave (c-06: round-trip + corrupt + no-storage)', function () {
     assert(MBDJ.store, 'MBDJ.store missing');
     assert(MBDJ.store.KEY === 'mbdj.v1', 'key mbdj.v1');
-    assert(MBDJ.store.SCHEMA_VERSION === 1, 'schema 1');
+    assert(MBDJ.store.SCHEMA_VERSION === 2, 'schema 2');
     assert(typeof MBDJ.store.isAvailable === 'function', 'isAvailable');
     var slot = null;
     var mem = { getItem: function () { return slot; }, setItem: function (k, v) { slot = String(v); }, removeItem: function () { slot = null; } };
     var snap = { songs: [{ id: 's1', title: 'Matador', artist: 'X', status: 'drawn' }], history: [], current: null, locked: true, startedAt: '2026-10-01T20:00:00.000Z' };
     assert(MBDJ.store.save(snap, mem).ok === true, 'save ok');
     var back = MBDJ.store.load(mem);
-    assert(back.ok === true && back.snapshot.locked === true && back.snapshot.schemaVersion === 1, 'round-trip');
+    assert(back.ok === true && back.snapshot.locked === true && back.snapshot.schemaVersion === 2, 'round-trip');
     assert(typeof back.snapshot.savedAt === 'string', 'savedAt');
     slot = '{"songs":[{';
     var bad = MBDJ.store.load(mem);
@@ -164,7 +164,7 @@
     assert(typeof MBDJ.core.createSong === 'function', 'createSong');
     assert(typeof MBDJ.core.createHistoryEntry === 'function', 'createHistoryEntry');
     var s = MBDJ.core.createSession();
-    assert(s.locked === false && s.schemaVersion === 1, 'locked/schema');
+    assert(s.locked === false && s.schemaVersion === 2, 'locked/schema');
     assert(s.songs.length === 0 && s.history.length === 0 && s.current === null, 'fresh');
     var song = MBDJ.core.createSong('T', 'A');
     assert(song.status === 'available', 'song available');
@@ -304,6 +304,34 @@
     var n = MBDJ.public.coverFor(null);
     assert(n.kind === 'placeholder' && n.initial === '?', 'fallback mirror');
     assert(n.background.indexOf('hsl(') === 0, 'hsl inline mirror');
+  });
+
+  check('tapas c-16 (coverUrl + normalizacion + candado + publica)', function () {
+    var cs = MBDJ.core.createSong('T', 'A');
+    assert(cs.coverUrl === null, 'song coverless mirror');
+    assert(MBDJ.core.createSession().schemaVersion === 2, 'schema 2 mirror');
+    assert(MBDJ.store.SCHEMA_VERSION === 2, 'store schema 2 mirror');
+    assert(MBDJ.import.normalizeLine('X - Y').coverUrl === null, 'parse coverless mirror');
+    assert(MBDJ.app.buildDemoSongs()[0].coverUrl === null, 'demo coverless mirror');
+    assert(MBDJ.app.normalizeCoverValue('   ').value === null, 'clear mirror');
+    assert(MBDJ.app.normalizeCoverValue('https://x.com/a.jpg').value === 'https://x.com/a.jpg', 'remote mirror');
+    assert(MBDJ.app.normalizeCoverValue('tapa.png').value === 'assets/covers/tapa.png', 'local mirror');
+    assert(MBDJ.app.normalizeCoverValue('javascript:alert(1)').ok === false, 'xss mirror');
+    assert(MBDJ.app.normalizeCoverValue('a/b.png').ok === false, 'slash mirror');
+    var cimg = MBDJ.public.coverFor({ id: 'c16-1', title: 'Matador', coverUrl: 'https://x.com/a.jpg' });
+    assert(cimg.kind === 'image' && cimg.src === 'https://x.com/a.jpg', 'image mirror');
+    var cph = MBDJ.public.coverFor({ id: 'c16-1', title: 'Matador', coverUrl: null });
+    assert(cph.kind === 'placeholder' && cph.initial === 'M', 'placeholder mirror');
+    assert(cimg.background === cph.background, 'hue intacto mirror');
+    var wasLocked = MBDJ.core.state.locked;
+    try {
+      MBDJ.core.state.locked = true;
+      var cr = MBDJ.app.handleCoverRequest('nope', 'https://x.com/a.jpg');
+      assert(cr.blocked === true && cr.message === MBDJ.app.BLOCKED_MESSAGE, 'cover locked mirror');
+    } finally {
+      MBDJ.core.state.locked = wasLocked;
+    }
+    assert(MBDJ.app.REVEAL_DELAY_MS === 5000, 'delay intacto mirror');
   });
 
   var el = document.getElementById('results');

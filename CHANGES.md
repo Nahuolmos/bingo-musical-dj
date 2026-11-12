@@ -401,6 +401,27 @@ Paso │ Agente A (Motor + sorteo)      │ Agente B (Importación + blindaje)  
 
 ---
 
+### [C-16] `song-covers`
+- **Estado**: `[x]` completado (2026-10-16, archivado en `openspec/changes/archive/2026-10-16-c-16-song-covers/`, specs `song-covers` nueva + 6 MODIFIED/ADDED (`session-models`, `session-persistence`, `import-catalog`, `import-file`, `public-screen`, `session-lock`), tests 334/334 green, validate `--strict` limpio; review Standards APROBADO-CON-NOTAS + Spec BLOQUEADO→FIXED verificado)
+- **Seguimiento pre-show**: smoke manual `file://` real + DevTools cero-fetch + checklist 11c firmado por el operador pendientes (no bloquean; contratos cubiertos por tests + drill offline 9/9 en `docs/design/evidence/c-16/drill-offline.md`).
+- **Scope**: Tapa opcional por canción, resuelta pre-show o manual, con fallback generativo determinista — el show nunca depende de la red (US-002…US-006, US-008; RN-PUB; RN-SES-01)
+  - Modelo: `Song.coverUrl` (URL/filename o `null`), `schemaVersion: 2` con migración v1→v2 (`coverUrl` faltante → `null`); corrupt solo ante versión desconocida/futura.
+  - Resolución auto en importación (solo pre-show, nunca en sorteo/reveal/render): iTunes keyless, timeout 12 s por intento, `limit` 8, 1 retry solo-transitorio; `null` + nota visible ante fallo/match-ausente/offline; `locked` → cero fetch + mensaje compartido; conteo `N nueva(s), M duplicado(s)` intacto.
+  - Campo manual por fila (URL remota o filename `assets/covers/`, preview con fallback, XSS-safe `esc()` + sandbox `http(s)`/bare-filename), locked-gated como edición de lista (deshabilitado + seam bloqueado sin prompt ni fetch).
+  - Pública: slot prefiere imagen, else placeholder C-14 (mismo hue/inicial); `spinning` scrubbea `coverUrl` (anti-spoiler artwork); `<img onerror>` → placeholder sin romper contadores/título/pills; paridad `coverFor` módulo + `coverForInline` espejo test-guardeada (incluye fix B1: `\\s` en template emitido recortaba letras `s`).
+  - CSV historial sigue 6 columnas (tapas son atributo de catálogo persistido en `mbdj.v1`, no evidencia de sorteo).
+  - Bugs del change: demo-covers 0–1 tapas (matching exacto vs comillas/sufijos → tier relajado) + B1 escape-template (ver `archive-note.md`).
+  - Gates manuales: drill offline Node 9/9 PASS con tripwire anti-red + run real iTunes 12/12 demo; smoke `file://` + DevTools + 11c al operador.
+  - Tests: suite 334/334 VERDE (295 base C-15 + 39 `song-covers` incl. B1 bundle emitido + tuning 12s/8/1); contratos C-08/C-14/C-15 intactos.
+- **Dependencias**: C-04/C-05 (ruta import), C-08/C-14/C-15 (contratos pública + delay 5000), C-06/C-11 (persistencia v2 + lock)
+- **Governance**: MEDIO
+- **Leer antes**:
+  - `knowledge-base/05_reglas_de_negocio.md` §Dominio: Pantalla pública (RN-PUB) + §RN-SES-01
+  - `knowledge-base/06_funcionalidades.md` §US-002, §US-006, §US-008
+  - `knowledge-base/07_flujos_principales.md` §Flujo 1, §Flujo 4
+
+---
+
 ## Qué cambió vs v1 (2026-10-13 re-run)
 
 | # | Constraint | Cambio en CHANGES.md |

@@ -7,7 +7,11 @@
   'use strict';
 
   var KEY = 'mbdj.v1';
-  var SCHEMA_VERSION = 1;
+  var SCHEMA_VERSION = 2;
+
+  // c-16 song-covers: v1 snapshots (songs without coverUrl) migrate forward
+  // to null on load; unknown/future versions stay corrupt. '' also
+  // normalizes to null (coverUrl is string URL/filename or null).
 
   function resolveStorage(explicit) {
     if (explicit) return explicit;
@@ -38,7 +42,7 @@
   function isValidSnapshot(obj) {
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
     if (!Array.isArray(obj.songs) || !Array.isArray(obj.history)) return false;
-    if (obj.schemaVersion !== SCHEMA_VERSION) return false;
+    if (obj.schemaVersion !== 1 && obj.schemaVersion !== SCHEMA_VERSION) return false;
     if (obj.current !== null && obj.current !== undefined) {
       if (typeof obj.current !== 'object' || Array.isArray(obj.current)) return false;
       if (typeof obj.current.title !== 'string') return false;
@@ -47,6 +51,8 @@
   }
 
   // Never persist the transient spinning flag as true: strip it on save.
+  // c-17 gated reveal: additive `awaitingGate` flag (no schema bump —
+  // snapshots lacking it hydrate as no pending gate, same rule as v1/v2).
   function save(snapshot, explicit) {
     var st = resolveStorage(explicit);
     if (!st || typeof st.setItem !== 'function') return { ok: false, reason: 'unavailable' };
@@ -58,7 +64,8 @@
       locked: src.locked === true,
       startedAt: typeof src.startedAt === 'string' ? src.startedAt : new Date().toISOString(),
       savedAt: new Date().toISOString(),
-      schemaVersion: SCHEMA_VERSION
+      schemaVersion: SCHEMA_VERSION,
+      awaitingGate: src.awaitingGate === true
     };
     try {
       st.setItem(KEY, JSON.stringify(payload));
@@ -66,6 +73,12 @@
     } catch (e) {
       return { ok: false, reason: 'unavailable' };
     }
+  }
+
+  function normalizeSongCover(s) {
+    if (!s || typeof s !== 'object') return s;
+    if (s.coverUrl === undefined || s.coverUrl === '') s.coverUrl = null;
+    return s;
   }
 
   function load(explicit) {
@@ -85,16 +98,19 @@
       return { ok: false, reason: 'corrupt' };
     }
     if (!isValidSnapshot(obj)) return { ok: false, reason: 'corrupt' };
+    var songs = obj.songs.map(normalizeSongCover);
+    var current = obj.current == null ? null : normalizeSongCover(obj.current);
     return {
       ok: true,
       snapshot: {
-        songs: obj.songs,
+        songs: songs,
         history: obj.history,
-        current: obj.current == null ? null : obj.current,
+        current: current,
         locked: obj.locked === true,
         startedAt: obj.startedAt,
         savedAt: obj.savedAt,
         schemaVersion: obj.schemaVersion,
+        awaitingGate: obj.awaitingGate === true,
         spinning: false
       }
     };
